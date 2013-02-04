@@ -50,14 +50,14 @@ This plugin is implemented according to Plugin-Agent pattern.
         |  +-----------+      +----------+  |     |  +----------+       +----------+  |
         +-----------------------------------+     +-----------------------------------+
 			 
-• Openstack Mellanox Quantum Plugin implements the Quantum v2.0 API.
-• Mellanox Quantum Plugin processes the Quantum API calls and manages 
+ï¿½ Openstack Mellanox Quantum Plugin implements the Quantum v2.0 API.
+ï¿½ Mellanox Quantum Plugin processes the Quantum API calls and manages 
     network segmentation ID allocation. 
-• The plugin uses Databsase to store configuration and allocation mapping.
-• The plugin maintains compatibility to Linux Bridge Plugin support DHCP 
+ï¿½ The plugin uses Databsase to store configuration and allocation mapping.
+ï¿½ The plugin maintains compatibility to Linux Bridge Plugin support DHCP 
     and L3 Agents by running L2 Linux Bridge Agent on Network Node.
-• Mellanox Openstack Quantum Agent (L2 Agent) should run on each compute node. 
-• Agent should apply VIF connectivity based on mapping between a VIF (VM vNIC) 
+ï¿½ Mellanox Openstack Quantum Agent (L2 Agent) should run on each compute node. 
+ï¿½ Agent should apply VIF connectivity based on mapping between a VIF (VM vNIC) 
     and Embedded Switch port.
 
 1.2 Mellanox nova VIF Driver
@@ -69,7 +69,7 @@ with optional RDMA guest access) to the Embedded Switch port.
 1.3 Prerequisite
 -------------------------------------------------------------------------------
 The following are the Mellanox Quantum Plugin prerequisites:
-1. Compute nodes should be equiped with Mellanox ConnectX®-2/ConnectX®-3 
+1. Compute nodes should be equiped with Mellanox ConnectXï¿½-2/ConnectXï¿½-3 
     Network Adapter. 
 2. OFED 2.0 installed.
 3. eswitchd controller utility - An add-on user space software that manages 
@@ -140,7 +140,7 @@ http://github.com/mellanox-openstack/mellanox-quantum-plugin/install_guide
                                  to the physical interface (on top of Mellanox Adapter) connecting 
 								 the node to that physical network. 
 							  
-For Plugin consfiguration file example, please refer to 
+For Plugin configuration file example, please refer to 
 http://github.com/mellanox-openstack/mellanox-quantum-plugin/quantum/etc/quantum/plugins/mlnx/mlnx_conf.ini
 
 4.2 Nova Configuration (compute node(s)) 
