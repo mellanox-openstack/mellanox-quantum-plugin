@@ -1,0 +1,93 @@
+
+Mellanox Openstack Quantum Plugin Installation Guide
+					Rev 1.0
+====================================================
+
+Contents:
+===============================================================================
+1. Mellanox Quantum Plugin Installation
+   1.1 On the Quantum Server Node
+   1.2 On Compute Nodes
+       1.2.1 Prerequisites
+       1.2.2 Nova-compute
+       1.2.3 eswitchd
+       1.2.4 quantum Agent
+
+
+
+1.	Mellanox Quantum Plugin Installation
+===============================================================================
+1.1	On the Quantum Server Node
+-------------------------------------------------------------------------------
+1. Copy Mellanox openstack plugin to installed quantum plugins directory 
+   (usually /usr/lib/python2.7/dist-packages/quantum/plugins)
+   cp -a mellanox-quantum-plugin/quantum/quantum/plugins/mlnx /usr/lib/python2.7/dist-packages/quantum/plugins
+
+2. Modify the /etc/quantum/quantum.conf file.
+   core_plugin = quantum.plugins.mlnx.mlnx_plugin.MellanoxEswitchPlugin
+
+3. Copy the Mellanox plugin configuration. 
+   mkdir -p /etc/quantum/plugins/mlnx
+   cp mellanox-quantum-plugin/quantum/etc/quantum/plugins/mlnx/mlnx_conf.ini /etc/quantum/plugins/mlnx
+
+4. Modify the /etc/quantum/plugins/mlnx/mlnx_conf.ini file to reflect your environment.
+ 
+5. Run the server 
+   quantum-server --config-file /etc/quantum/quantum.conf --config-file /etc/quantum/plugins/mlnx/mlnx_conf.ini
+   or 
+   /etc/init.d/quantum-server start 
+
+1.2 On Compute Nodes
+-------------------------------------------------------------------------------
+
+1.2.1 Prerequisites
+-------------------------------------------------------------------------------
+python-zmq
+iproute2-ss121001 
+ethtool 3.5
+ 
+1.2.2 Nova-compute
+-------------------------------------------------------------------------------
+1. Copy the nova Mellanox vifDriver
+    cp -a mellanox-quantum-plugin/nova/nova/virt/libvirt/mlnx /usr/lib/python2.6/site-packages/nova/virt/libvirt
+
+2. Modify nova.conf
+    compute_driver=nova.virt.libvirt.driver.LibvirtDriver
+    libvirt_vif_driver=nova.virt.libvirt.mlnx.vif.MlxEthVIFDriver
+    vnic_type=direct - can be either 'direct' or 'hostdev'
+    fabric=default - specifies physical network for vNICs (currently support one fabric per node)
+
+3. Restart nova
+
+
+1.2.3 eswitchd
+-------------------------------------------------------------------------------
+1. Copy daemon files
+    cp -a daemon /opt/mlnx_daemon
+
+2. Copy the configuration file and modify it according to your environment
+    mkdir  /etc/mlnx_daemon
+    cp /opt/mlnx_daemon/etc/mlnx_daemon.conf /etc/mlnx_daemon
+
+3. Run the daemon:
+    /opt/mlnx_daemon/eswitch_daemon.py 
+
+
+1.2.4 quantum Agent
+-------------------------------------------------------------------------------
+1. Copy Mellanox openstack agent
+    cp -a mellanox-quantum-plugin/quantum/quantum/plugins/mlnx /usr/lib/python2.6/site-packages/quantum/plugins
+
+2. Copy the quantum.conf and mlnx_conf.ini file to the compute node
+    mkdir -p /etc/quantum/plugins/mlnx
+    cp mellanox-quantum-plugin/quantum/etc/quantum/plugins/mlnx/mlnx_conf.ini /etc/quantum/plugins/mlnx
+
+3. Modify the Quantum Agent configuration at /etc/quantum/plugins/mlnx/mlnx_conf.ini
+
+4. Run the agent
+    python /usr/lib/python2.6/site-packages/quantum/plugins/mlnx/agent/eswitch_quantum_agent.py --config-file /etc/quantum/quantum.conf  --config-file /etc/quantum/plugins/mlnx/mlnx_conf.ini
+
+	
+
+
+
