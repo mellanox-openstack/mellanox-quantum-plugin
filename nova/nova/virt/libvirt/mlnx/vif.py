@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from nova import exception
 from nova import flags
 from nova.openstack.common import cfg
@@ -25,7 +26,7 @@ from nova.virt.libvirt.mlnx import config  as mlxconfig
 
 mlnx_vif_opts = [
     cfg.StrOpt('vnic_type',
-        default='eth',
+        default='direct',
         help="vNIC type: direct or hostdev"),
     cfg.StrOpt('fabric',
                 default='default',
@@ -36,6 +37,7 @@ FLAGS = flags.FLAGS
 FLAGS.register_opts(mlnx_vif_opts)
 
 LOG = logging.getLogger(__name__)
+HEX_BASE = 16
 
 class MlxEthVIFDriver(vif.VIFDriver):
     """VIF driver for Mellanox Embedded switch Plugin"""
@@ -45,13 +47,16 @@ class MlxEthVIFDriver(vif.VIFDriver):
         self.fabric = FLAGS.fabric
 
     def get_config(self, mac_address, dev):
-        conf = mlxconfig.MlxLibvirtConfigGuestInterface()
-        conf.model = 'virtio'
-        conf.net_type = "direct"
-        conf.source_dev = dev
-        conf.script = ""
-        conf.mac_addr = mac_address
-        conf.mode = "passthrough"
+        conf = None
+        if self.vnic_type == 'direct':
+            conf = mlxconfig.MlxLibvirtConfigGuestInterface()
+            conf.source_dev = dev
+            conf.mac_addr = mac_address
+        elif self.vnic_type == 'hostdev':
+            conf = mlxconfig.MlxLibvirtConfigGuestDevice()
+            self._set_source_address(conf , dev)
+        else:
+            LOG.warning(_("Unknown vnic type %s"),self.vnic_type)
         return conf
 
     def plug(self, instance, vif):
@@ -75,5 +80,17 @@ class MlxEthVIFDriver(vif.VIFDriver):
             dev = self.conn_util.deallocate_nic(vnic_mac, self.fabric)
         except Exception,e:
             LOG.warning(_("Failed while unplugging vif %s"), e)
+                       
+    def _str_to_hex(self,str_val):
+        ret_val = hex(int(str_val,HEX_BASE))
+        return ret_val
+    
+    def _set_source_address(self, conf , dev):
+        source_address = re.split(r"\.|\:", dev)
+        conf.domain, conf.bus , conf.slot, conf.function = source_address
+        conf.domain = self._str_to_hex(conf.domain)
+        conf.bus = self._str_to_hex(conf.bus)
+        conf.slot = self._str_to_hex(conf.slot)
+        conf.function = self._str_to_hex(conf.function)
             
 

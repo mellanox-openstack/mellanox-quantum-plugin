@@ -68,7 +68,7 @@ class DeviceDB():
             return dev
         except Exception, e:
             LOG.error("exception on device allocation on dev  %s",dev)
-            return None
+            raise e
         
     def deallocate_device(self,fabric,is_device,dev):
         resources = self.device_db[fabric]['vfs']

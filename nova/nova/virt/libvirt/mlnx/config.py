@@ -16,8 +16,8 @@
 # limitations under the License.
 
 """
-Configuration for Guest Interfaces to support direct and hostdev vNICs on top
-of Mellanox HCAs.
+    Configuration for Guest Interfaces and Devices to support direct and hostdev vNICs on top
+    of Mellanox HCA embedded Switch.
 """
 from lxml import etree
 from nova.openstack.common import log as logging
@@ -25,68 +25,48 @@ from nova.virt.libvirt import config
 
 LOG = logging.getLogger(__name__)
 
-class MlxLibvirtConfigGuestInterface(config.LibvirtConfigGuestDevice):
+class MlxLibvirtConfigGuestDevice(config.LibvirtConfigGuestDevice):
     """
-    Overrides LibvirtConfigGuestDevice to support pass-through mode when using
-    SR-IOV Paravirtualization.
+    @note: Overrides LibvirtConfigGuestDevice to support hosdev PCI device when using
+           SR-IOV Virtual Function assignment.
     """
     def __init__(self, **kwargs):
-        super(MlxLibvirtConfigGuestInterface, self).__init__(
-            root_name="interface",
-            **kwargs)
+        super(MlxLibvirtConfigGuestDevice, self).__init__(**kwargs)
+        self.domain   = None
+        self.bus      = None
+        self.slot     = None
+        self.function = None
 
-        self.net_type = None
-        self.target_dev = None
-        self.model = None
+    def format_dom(self):
+        dev = etree.Element("hostdev", mode="subsystem", type="pci" )
+        address = etree.Element("address", 
+                                domain=self.domain,
+                                bus=self.bus,
+                                slot=self.slot,
+                                function=self.function)
+
+        source = etree.Element("source")
+        source.append(address)
+        dev.append(source)
+        return dev
+
+class MlxLibvirtConfigGuestInterface(config.LibvirtConfigGuestDevice):
+    """
+    @note: Overrides LibvirtConfigGuestInterface to support pass-through mode when using
+           SR-IOV Para-Virtualization
+    """
+    def __init__(self, **kwargs):
+        super(MlxLibvirtConfigGuestInterface, self).__init__(root_name="interface",**kwargs)
         self.mac_addr = None
-        self.script = None
         self.source_dev = None
-        self.vporttype = None
-        self.vportparams = []
-        self.filtername = None
-        self.filterparams = []
 
     def format_dom(self):
         dev = super(MlxLibvirtConfigGuestInterface, self).format_dom()
-
-        dev.set("type", self.net_type)
+        dev.set("type","direct")
         dev.append(etree.Element("mac", address=self.mac_addr))
-        if self.model:
-            dev.append(etree.Element("model", type=self.model))
-        if self.net_type == "ethernet":
-            if self.script is not None:
-                dev.append(etree.Element("script", path=self.script))
-            dev.append(etree.Element("target", dev=self.target_dev))
-        elif self.net_type == "direct":
-            if self.mode:
-                dev.append(etree.Element("source", dev=self.source_dev,
-                                         mode=self.mode))
-            else:
-                dev.append(etree.Element("source", dev=self.source_dev,
-                                         mode="private"))
-        else:
-            dev.append(etree.Element("source", bridge=self.source_dev))
-
-        if self.vporttype is not None:
-            vport = etree.Element("virtualport", type=self.vporttype)
-            for p in self.vportparams:
-                param = etree.Element("parameters")
-                param.set(p['key'], p['value'])
-                vport.append(param)
-            dev.append(vport)
-
-        if self.filtername is not None:
-            filter = etree.Element("filterref", filter=self.filtername)
-            for p in self.filterparams:
-                filter.append(etree.Element("parameter",
-                                            name=p['key'],
-                                            value=p['value']))
-            dev.append(filter)
+        dev.append(etree.Element("model", type='virtio'))
+        dev.append(etree.Element("source", dev=self.source_dev, mode='passthrough'))
         return dev
 
-    def add_filter_param(self, key, value):
-        self.filterparams.append({'key': key, 'value': value})
 
-    def add_vport_param(self, key, value):
-        self.vportparams.append({'key': key, 'value': value})
 

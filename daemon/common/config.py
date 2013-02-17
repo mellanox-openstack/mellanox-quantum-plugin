@@ -17,13 +17,13 @@
 
 from nova.openstack.common import cfg
 
-DEAFAULT_INTERFACE_MAPPINGS = []
+DEFAULT_INTERFACE_MAPPINGS = []
 
 mlx_daemon_opts = [
                     cfg.StrOpt('socket_vif', default="tcp://0.0.0.0:5001"),
                     cfg.StrOpt('socket_of', default="tcp://0.0.0.0:5000"),
                     cfg.ListOpt('fabrics',
-                                default=DEAFAULT_INTERFACE_MAPPINGS,
+                                default=DEFAULT_INTERFACE_MAPPINGS,
                                 help=("List of <physical_network>:<physical_interface>")),
                     cfg.IntOpt('default_timeout',
                                default=5000,

@@ -20,7 +20,9 @@ from utils import pci_utils
 from utils.command_utils import execute
 from db import eswitch_db
 from resource_mngr import ResourceManager 
+from common.exceptions import MlxException
 
+DEFAULT_MAC_ADDRESS = '00:00:00:00:00:01'
 LOG = logging.getLogger('mlnx_daemon')
 
 class eSwitchHandler(object):
@@ -28,7 +30,10 @@ class eSwitchHandler(object):
         self.eswitches = {}
         self.pci_utils = pci_utils.pciUtils()
         self.rm = ResourceManager()
-        self.devices = set()
+        self.devices = {
+                        'direct': set(),
+                        'hostdev':set()
+                        }
         if fabrics:
             self.add_fabrics(fabrics)
     
@@ -40,11 +45,14 @@ class eSwitchHandler(object):
           
     def sync_devices(self):
         devices = self.rm.scan_attached_devices()
-        added_devs = set(devices['direct'])-self.devices
-        removed_devs = self.devices-set(devices['direct'])      
-        self._treat_added_devices(added_devs)
-        self._treat_removed_devices(removed_devs)
-        self.devices = set(devices['direct'])
+        added_devs = {}
+        removed_devs = {}
+        for type, devs in devices.items():
+            added_devs[type] = set(devs)-self.devices[type]
+            removed_devs[type] = self.devices[type]-set(devs)      
+            self._treat_added_devices(added_devs[type],type)
+            self._treat_removed_devices(removed_devs[type],type)
+            self.devices[type] = set(devices[type])
 
     def _add_fabric(self,fabric,pf):
         self.rm.add_fabric(fabric,pf)
@@ -55,19 +63,19 @@ class eSwitchHandler(object):
         for eth in eths:
             self.eswitches[fabric].create_port(eth, 'direct')
 
-    def _treat_added_devices(self, devices):
+    def _treat_added_devices(self, devices,dev_type):
         for dev, mac, fabric in devices:
             if fabric:
-                self.rm.allocate_device(fabric, dev_type='direct', dev=dev)
+                self.rm.allocate_device(fabric, dev_type=dev_type, dev=dev)
                 self.eswitches[fabric].attach_vnic(port_name=dev, device_id=None, vnic_mac=mac)
             else:
                 LOG.debug("No Fabric defined for device %s", dev)
                 
-    def _treat_removed_devices(self,devices):
+    def _treat_removed_devices(self,devices,dev_type):
         for dev, mac in devices:
             fabric = self.rm.get_fabric_for_dev(dev)
             if fabric:
-                self.rm.deallocate_device(fabric, dev_type='direct', dev=dev)
+                self.rm.deallocate_device(fabric, dev_type=dev_type, dev=dev)
                 self.eswitches[fabric].detach_vnic(vnic_mac=mac)
             else:
                 LOG.debug("No Fabric defined for device %s", dev)
@@ -97,29 +105,43 @@ class eSwitchHandler(object):
                 continue
         LOG.debug("vnics are %s",vnics)
         return vnics  
-    
+
     def create_port(self, fabric, vnic_type, device_id, vnic_mac):
         dev = None
         eswitch = self._get_vswitch_for_fabric(fabric)
         if eswitch:
             dev = eswitch.get_dev_for_vnic(vnic_mac)
             if not dev:
-                dev = self.rm.allocate_device(fabric, vnic_type)
-                if dev:
-                    if not eswitch.attach_vnic(dev, device_id, vnic_mac):
-                        self.rm.deallocate_device(fabric,vnic_type,dev)
-                        dev = None
+                try:
+                    dev = self.rm.allocate_device(fabric, vnic_type)
+                    if eswitch.attach_vnic(dev, device_id, vnic_mac):
+                        if vnic_type == 'hostdev':
+                            pf, vf_index = self._get_device_pf_vf(fabric, vnic_type, dev)
+                            self._config_vf_mac_address(pf, vf_index, vnic_mac)
+                    else:
+                        raise MlxException('Failed to attach vnic')
+                except (RuntimeError, MlxException):
+                    LOG.error('Create port operation failed ')
+                    self.rm.deallocate_device(fabric,vnic_type,dev)
+                    dev = None                                
         else:
             LOG.error("No eSwitch found for Fabric %s",fabric)
         return dev
          
     def delete_port(self, fabric, vnic_mac):
+        """
+        @note: Free Virtual function associated with vNIC MAc
+        """
         dev = None
         eswitch = self._get_vswitch_for_fabric(fabric)
         if eswitch:
             dev = eswitch.detach_vnic(vnic_mac)
             if dev:
                 dev_type = eswitch.get_dev_type(dev)
+                if dev_type == 'hostdev':
+                    pf, vf_index = self._get_device_pf_vf(fabric, dev_type, dev)
+                    #unset MAC to default value
+                    self._config_vf_mac_address(pf, vf_index, DEFAULT_MAC_ADDRESS)
                 self.rm.deallocate_device(fabric,dev_type,dev)
         else:
             LOG.error("No eSwitch found for Fabric %s",fabric)
@@ -136,8 +158,7 @@ class eSwitchHandler(object):
             dev = eswitch.get_dev_for_vnic(vnic_mac)
             if dev:
                 vnic_type = eswitch.get_port_type(dev)
-                pf = self.rm.get_fabric_pf(fabric)
-                vf_index = self.pci_utils.get_vf_index(dev, vnic_type)
+                pf, vf_index = self._get_device_pf_vf(fabric, vnic_type, dev)
                 if pf and vf_index:
                     try:
                         self._config_vlan_priority(pf, vf_index, dev, vlan)
@@ -153,16 +174,23 @@ class eSwitchHandler(object):
             return self.eswitches[fabric]
         else:
             return 
-        
-    def _config_vlan_priority(self, pf, vf_index, dev, vlan, priority='0'):
+    
+    def _get_device_pf_vf(self, fabric, vnic_type, dev):
+        pf = self.rm.get_fabric_pf(fabric)
+        vf_index = self.pci_utils.get_vf_index(dev, vnic_type)
+        return pf, vf_index
+     
+    def _config_vf_mac_address(self,pf,vf_index,vnic_mac):
+        cmd = ['ip', 'link','set',pf, 'vf', vf_index ,'mac',vnic_mac]
+        execute(cmd, root_helper='sudo')
+            
+    def _config_vlan_priority(self, pf, vf_index, dev, vlan,priority='0'):
         cmd = ['ip', 'link', 'set', dev, 'down']       
         execute(cmd, root_helper='sudo')
     
-        cmd = ['ip', 'link','set',pf, 'vf', vf_index , 'vlan', vlan, 'qos', priority]
+        cmd = ['ip', 'link','set',pf , 'vf', vf_index, 'vlan', vlan, 'qos', priority]
         execute(cmd, root_helper='sudo')
     
         cmd = ['ip', 'link', 'set', dev, 'up']       
         execute(cmd, root_helper='sudo')
 
-
-    
