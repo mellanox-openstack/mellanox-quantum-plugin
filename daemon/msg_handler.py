@@ -50,7 +50,7 @@ class AttachVnic(BasicMessageHandler):
         fabric     = self.msg['fabric']
         vnic_type  = self.msg['vnic_type']
         device_id  = self.msg['device_id']
-        vnic_mac   = self.msg['vnic_mac'] 
+        vnic_mac   = (self.msg['vnic_mac']).lower() 
         dev = eSwitchHandler.create_port(fabric, vnic_type, device_id, vnic_mac)
         if dev:
             return self.build_response(True, response= {'dev':dev})
@@ -64,7 +64,7 @@ class DetachVnic(BasicMessageHandler):
         
     def execute(self, eSwitchHandler):
         fabric     = self.msg['fabric']
-        vnic_mac   = self.msg['vnic_mac']
+        vnic_mac   = (self.msg['vnic_mac']).lower()
         dev = eSwitchHandler.delete_port(fabric, vnic_mac)
         if dev:
             return self.build_response(True, response = {'dev':dev})
@@ -72,13 +72,13 @@ class DetachVnic(BasicMessageHandler):
             return self.build_response(False, reason = 'Detach vnic failed')
         
 class SetVLAN(BasicMessageHandler):
-    MSG_ATTRS_VALID_MAP = set(['fabric','vnic_mac','vlan'])
+    MSG_ATTRS_VALID_MAP = set(['fabric','port_mac','vlan'])
     def __init__(self,msg):
         BasicMessageHandler.__init__(self,msg)
         
     def execute(self, eSwitchHandler):
         fabric     = self.msg['fabric']
-        vnic_mac   = self.msg['vnic_mac']
+        vnic_mac   = (self.msg['port_mac']).lower()
         vlan   = self.msg['vlan']
         ret = eSwitchHandler.set_vlan(fabric, vnic_mac, vlan)
         reason = None
@@ -112,7 +112,7 @@ class PortRelease(BasicMessageHandler):
     def execute(self, eSwitchHandler):
         ref_by_keys = ['mac_address']
         fabric     = self.msg['fabric']
-        vnic_mac   = self.msg['mac']
+        vnic_mac   = (self.msg['mac']).lower()
         ref_by     = self.msg['ref_by']
         
         reason = None
@@ -181,7 +181,6 @@ class MessageDispatch(object):
     
     def handle_msg(self, msg):
         result = {}
-        print "MSG=",msg
         action = msg.pop('action')
         if action in MessageDispatch.MSG_MAP.keys():
             msg_handler = MessageDispatch.MSG_MAP[action](msg)
@@ -191,6 +190,7 @@ class MessageDispatch(object):
                 LOG.error('Invalid message - cannot handle')
                 result = {'status':'FAIL','reason':'validation failed'}
         else:
+            LOG.error("Unsupported action - %s",action)
             result = {'action':action, 'status':'FAIL','reason':'unknown action'}           
         result['action'] = action    
         return result    

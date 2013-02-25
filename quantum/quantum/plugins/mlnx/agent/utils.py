@@ -84,7 +84,7 @@ class  eSwitchUtils(object):
     def set_port_vlan_id(self,physical_network,
                         segmentation_id,port_mac):
         LOG.debug(_("Set Vlan  %s on Port %s on Fabric %s"),segmentation_id,port_mac,physical_network)
-        msg = json.dumps({'action':'set_vlan', 'fabric':physical_network, 'vnic_mac':port_mac,'vlan':segmentation_id})
+        msg = json.dumps({'action':'set_vlan', 'fabric':physical_network, 'port_mac':port_mac,'vlan':segmentation_id})
         recv_msg = self.send_msg(msg)
         return True
 
@@ -137,4 +137,3 @@ class  eSwitchUtils(object):
         """
         eswitch_id = str()
         return eswitch_id
-      

@@ -58,7 +58,7 @@ class MlxEswitchDaemon(object):
         
     def _init_connections(self):
         context = zmq.Context()
-        self.socket_of  = context.socket(zmq.PULL)
+        self.socket_of  = context.socket(zmq.REP)
         self.socket_vif = context.socket(zmq.REP)
         self.socket_of.bind(cfg.CONF.DAEMON.socket_of)
         self.socket_vif.bind(cfg.CONF.DAEMON.socket_vif)
@@ -66,12 +66,12 @@ class MlxEswitchDaemon(object):
         self.poller.register(self.socket_of, zmq.POLLIN)
         self.poller.register(self.socket_vif, zmq.POLLIN)
         
-    def _get_msg(self):
+    def _handle_msg(self):
         data = None
         conn = dict(self.poller.poll(self.default_timeout))
         if conn:
             if conn.get(self.socket_of) == zmq.POLLIN:
-                msg = self.socket_of.recv(zmq.NOBLOCK)
+                msg = self.socket_of.recv()
                 sender = self.socket_of
             elif conn.get(self.socket_vif) == zmq.POLLIN:
                 msg = self.socket_vif.recv()
@@ -88,7 +88,10 @@ class MlxEswitchDaemon(object):
         LOG.info("Daemon Started!")
         polling_counter = 0
         while True:
-            self._get_msg()
+            try:
+                self._handle_msg()
+            except Exception,e:
+                LOG.error("exception during message handling - %s",e)
             if polling_counter == self.max_polling_count:
                 LOG.debug("Resync devices")
             #    self.eswitch_handler.sync_devices()

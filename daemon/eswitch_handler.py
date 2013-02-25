@@ -24,6 +24,7 @@ from common.exceptions import MlxException
 
 DEFAULT_MAC_ADDRESS = '00:00:00:00:00:01'
 LOG = logging.getLogger('mlnx_daemon')
+#LOG = logging.getLogger(__name__)
 
 class eSwitchHandler(object):
     def __init__(self,fabrics=None):
@@ -148,8 +149,25 @@ class eSwitchHandler(object):
         return dev  
 
     def port_release(self, fabric, vnic_mac):
-        ret = self.set_vlan(fabric, vnic_mac, 0)   
+        """
+        @todo: handle failures
+        """
+        ret = self.set_vlan(fabric, vnic_mac, 0)
+        self.port_down(fabric, vnic_mac)
+        eswitch = self._get_vswitch_for_fabric(fabric)
+        eswitch.port_release(vnic_mac)
         return ret
+    
+    def port_down(self,fabric,vnic_mac):
+        eswitch = self._get_vswitch_for_fabric(fabric)
+        if eswitch:
+            dev = eswitch.get_dev_for_vnic(vnic_mac)
+            if dev: 
+                self._config_port_down(dev)
+            else:
+                LOG.debug("No device for MAC %s",vnic_mac)
+                
+                
     
     def set_vlan(self, fabric, vnic_mac, vlan):
         eswitch = self._get_vswitch_for_fabric(fabric)
@@ -185,12 +203,16 @@ class eSwitchHandler(object):
         execute(cmd, root_helper='sudo')
             
     def _config_vlan_priority(self, pf, vf_index, dev, vlan,priority='0'):
-        cmd = ['ip', 'link', 'set', dev, 'down']       
-        execute(cmd, root_helper='sudo')
-    
+        self._config_port_down(dev)
         cmd = ['ip', 'link','set',pf , 'vf', vf_index, 'vlan', vlan, 'qos', priority]
         execute(cmd, root_helper='sudo')
-    
-        cmd = ['ip', 'link', 'set', dev, 'up']       
+        self._config_port_up(dev)
+            
+    def _config_port_down(self,dev):
+        cmd = ['ip', 'link', 'set', dev, 'down']       
         execute(cmd, root_helper='sudo')
-
+        
+    def _config_port_up(self,dev):
+        cmd = ['ip', 'link', 'set', dev, 'up']       
+        execute(cmd, root_helper='sudo')        
+        
