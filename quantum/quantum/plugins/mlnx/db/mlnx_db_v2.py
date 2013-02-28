@@ -29,12 +29,7 @@ from quantum.plugins.mlnx.db import mlnx_models_v2
 LOG = logging.getLogger(__name__)
 
 def initialize():
-    options = {"sql_connection": "%s" % cfg.CONF.DATABASE.sql_connection}
-    options.update({"sql_max_retries": cfg.CONF.DATABASE.sql_max_retries})
-    options.update({"reconnect_interval":
-                   cfg.CONF.DATABASE.reconnect_interval})
-    options.update({"base": models_v2.model_base.BASEV2})
-    db.configure_db(options)
+    db.configure_db()
 
 
 def _remove_non_allocatable_vlans(session, allocations, physical_network, vlan_ids):
@@ -189,6 +184,20 @@ def get_network_binding(session, network_id):
     except exc.NoResultFound:
         return
 
+def add_port_profile_binding(session, port_id, vnic_type):
+    with session.begin(subtransactions=True):
+        binding = mlnx_models_v2.PortProfileBinding(port_id,vnic_type)
+        session.add(binding)
+
+
+def get_port_profile_binding(session, port_id):
+    try:
+        binding = (session.query(mlnx_models_v2.PortProfileBinding).
+                   filter_by(port_id=port_id).
+                   one())
+        return binding
+    except exc.NoResultFound:
+        return
 
 def get_port_from_device(device):
     """Get port from database"""

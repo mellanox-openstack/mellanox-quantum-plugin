@@ -18,7 +18,7 @@
 import json
 import zmq
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
 from quantum.openstack.common import log as logging
 from quantum.plugins.mlnx.common import exceptions
 
@@ -137,3 +137,4 @@ class  eSwitchUtils(object):
         """
         eswitch_id = str()
         return eswitch_id
+      

@@ -18,21 +18,25 @@
 from quantum.common import constants as q_const
 from quantum.db import api as db_api
 from quantum.db import dhcp_rpc_base 
-from quantum.openstack.common.rpc import dispatcher
+from quantum.db import l3_rpc_base
+from quantum.db import agents_db
+from quantum.common import rpc as q_rpc
+#from quantum.openstack.common.rpc import dispatcher
 from quantum.openstack.common import log as logging
 from quantum.plugins.mlnx.db import mlnx_db_v2 as db
 
 LOG = logging.getLogger(__name__)
 
-class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
+class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
+                       l3_rpc_base.L3RpcCallbackMixin):
     # Set RPC API version to 1.0 by default.
     RPC_API_VERSION = '1.0'
         
     #to be compatible with Linux Bridge Agent on Network Node
     TAP_PREFIX_LEN = 3
     
-    def __init__(self, rpc_context):
-        self.rpc_context = rpc_context
+    def __init__(self):
+        pass
 
     def create_rpc_dispatcher(self):
         """
@@ -41,7 +45,8 @@ class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
             If a manager would like to set an RPC API version, or support more than
             one class as the target of RPC messages, override this method.
         """
-        return dispatcher.RpcDispatcher([self])
+        return q_rpc.PluginRpcDispatcher([self,
+                                          agents_db.AgentExtRpcCallback()])
     
     @classmethod
     def get_port_from_device(cls, device):
@@ -67,7 +72,7 @@ class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
                                              port['network_id'])
             entry = {'device': device,
                      'physical_network': binding.physical_network,
-                     'network_type':'vlan',
+                     'network_type':binding.network_type,
                      'vlan_id': binding.segmentation_id,
                      'network_id': port['network_id'],
                      'port_mac':port['mac_address'],
@@ -84,7 +89,8 @@ class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
         """Device no longer exists on agent"""
         agent_id = kwargs.get('agent_id')
         device = kwargs.get('device')
-        LOG.debug("Device %s no longer exists on %s", device, agent_id)
+        LOG.debug(_("Device %(device)s no longer exists on %(agent_id)s"),
+                  locals())
         port = db.get_port_from_device(device)
         if port:
             entry = {'device': device,
@@ -96,3 +102,17 @@ class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin):
                      'exists': False}
             LOG.debug("%s can not be found in database", device)
         return entry
+    
+    def update_device_up(self, rpc_context, **kwargs):
+        """Device is up on agent"""
+        agent_id = kwargs.get('agent_id')
+        device = kwargs.get('device')
+        LOG.debug(_("Device %(device)s up %(agent_id)s"),
+                  locals())
+        port = self.get_port_from_device(device)
+        if port:
+            if port['status'] != q_const.PORT_STATUS_ACTIVE:
+                # Set port status to ACTIVE
+                db.set_port_status(port['id'], q_const.PORT_STATUS_ACTIVE)
+        else:
+            LOG.debug(_("%s can not be found in database"), device)

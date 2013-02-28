@@ -17,14 +17,17 @@
 
 import sys
 
+from oslo.config import cfg
 from quantum.api.v2 import attributes
 from quantum.common import exceptions as q_exc
 from quantum.common import topics
 from quantum.db import db_base_plugin_v2
 from quantum.db import l3_db
+from quantum.db import agents_db
+# NOTE: quota_db cannot be removed, it is for db model
+from quantum.db import quota_db
 from quantum.extensions import providernet as provider
-from quantum.openstack.common import context
-from quantum.openstack.common import cfg
+from quantum.extensions import portbindings
 from quantum.openstack.common import rpc
 from quantum.openstack.common import log as logging
 from quantum.plugins.mlnx.common import constants
@@ -37,7 +40,8 @@ from quantum import policy
 LOG = logging.getLogger(__name__)
 
 class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
-                          l3_db.L3_NAT_db_mixin):
+                          l3_db.L3_NAT_db_mixin, 
+                          agents_db.AgentDbMixin):
     """
     @note: Realization of Quantum API on top of Mellanox
            NIC embedded switch technology.
@@ -50,8 +54,15 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
     # bulk operations. Name mangling is used in order to ensure it
     # is qualified by class
     __native_bulk_support = True
+    #  __native_pagination_support = True
+    #  __native_sorting_support = True
 
-    supported_extension_aliases = ["provider", "router"]
+    supported_extension_aliases = ["provider", "router", "binding", "agent", "quotas"]
+    
+    network_view = "extension:provider_network:view"
+    network_set = "extension:provider_network:set"
+    binding_view = "extension:port_binding:view"
+    binding_set = "extension:port_binding:set"
 
     def __init__(self):
         """
@@ -62,23 +73,23 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         db.sync_network_states(self.network_vlan_ranges)
         self._set_tenant_network_type()
         self.agent_rpc = cfg.CONF.AGENT.rpc
+        self.vnic_type = cfg.CONF.ESWITCH.vnic_type
         self._setup_rpc()
         LOG.debug("Mellanox Embedded Switch Plugin initialisation complete")
      
     def _setup_rpc(self):
         # RPC support
         self.topic = topics.PLUGIN
-        self.rpc_context = context.RequestContext('quantum', 'quantum',
-                                                  is_admin=False)
         self.conn = rpc.create_connection(new=True)
-        self.notifier = agent_notify_api.AgentNotifierApi(topics.AGENT)       
-        self.callbacks = rpc_callbacks.MlnxRpcCallbacks(self.rpc_context)
+        self.notifier = agent_notify_api.AgentNotifierApi(topics.AGENT)  
+        self.callbacks = rpc_callbacks.MlnxRpcCallbacks() 
+       
         self.dispatcher = self.callbacks.create_rpc_dispatcher()
         self.conn.create_consumer(self.topic, self.dispatcher,
                                   fanout=False)
         # Consume from all consumers in a thread
         self.conn.consume_in_thread()
-        
+                           
     def _parse_network_vlan_ranges(self):
         self.network_vlan_ranges = {}
         for entry in cfg.CONF.VLANS.network_vlan_ranges:
@@ -89,13 +100,21 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
                                                  int(vlan_min),
                                                  int(vlan_max))
                 except ValueError as ex:
-                    LOG.error("Invalid network VLAN range: \'%s\' - %s" %
-                              (entry, ex))
+                    LOG.error(_("Invalid network VLAN range: "
+                                "'%(entry)s' - %(ex)s. "
+                                "Service terminated!"),
+                              locals())
                     sys.exit(1)
             else:
                 self._add_network(entry)
         LOG.debug("network VLAN ranges: %s" % self.network_vlan_ranges)
-        
+     
+    def _check_view_auth(self, context, resource, action):
+        return policy.check(context, action, resource)
+
+    def _enforce_set_auth(self, context, resource, action):
+        policy.enforce(context, action, resource)
+
     def _add_network_vlan_range(self, physical_network, vlan_min, vlan_max):
         self._add_network(physical_network)
         self.network_vlan_ranges[physical_network].append((vlan_min, vlan_max))
@@ -103,19 +122,9 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
     def _add_network(self, physical_network):
         if physical_network not in self.network_vlan_ranges:
             self.network_vlan_ranges[physical_network] = []
-    
-    def _check_provider_view_auth(self, context, network):
-        return policy.check(context,
-                            "extension:provider_network:view",
-                            network)
-
-    def _enforce_provider_set_auth(self, context, network):
-        return policy.enforce(context,
-                              "extension:provider_network:set",
-                              network)
-
+ 
     def _extend_network_dict_provider(self, context, network):
-        if self._check_provider_view_auth(context, network):
+        if self._check_view_auth(context, network, self.network_view):
             binding = db.get_network_binding(context.session, network['id'])
             network[provider.NETWORK_TYPE] = binding.network_type
             if binding.network_type == constants.TYPE_FLAT:
@@ -153,8 +162,8 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
             return (None, None, None)
         
         # Authorize before exposing plugin details to client
-        self._enforce_provider_set_auth(context, attrs)
-
+        self._enforce_set_auth(context, attrs, self.network_set)
+        
         if not network_type_set:
             msg = _("provider:network_type required")
             raise q_exc.InvalidInput(error_message=msg)
@@ -218,15 +227,33 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
             return
 
         # Authorize before exposing plugin details to client
-        self._enforce_provider_set_auth(context, attrs)
+        self._enforce_set_auth(context, attrs, self.network_set)
 
-        msg = _("plugin does not support updating provider attributes")
+        msg = _("Plugin does not support updating provider attributes")
         raise q_exc.InvalidInput(error_message=msg)
 
-    def create_network(self, context, network):              
+    def _process_port_binding_create(self,context,attrs):
+        binding_profile = attrs.get(portbindings.PROFILE)
+        binding_profile_set = attributes.is_attr_set(binding_profile)
+        if not binding_profile_set:
+            return self.vnic_type
+        msg = str()
+        if constants.VNIC_TYPE in binding_profile:
+            if binding_profile[constants.VNIC_TYPE] in (constants.VIF_TYPE_DIRECT, constants.VIF_TYPE_HOSTDEV):
+                return binding_profile[constants.VNIC_TYPE]
+            else:
+                msg = "invalid vnic_type on port_create"
+        else:   
+            msg = "vnic_type is not defined in port profile"
+        raise q_exc.InvalidInput(error_message=msg)
+    
+    def create_network(self, context, network):     
+        (network_type, physical_network,
+           vlan_id) = self._process_provider_create(context, network['network'])   
+                 
         session = context.session
         with session.begin(subtransactions=True):
-            (network_type, physical_network,vlan_id) = self._process_provider_create(context, network['network'])       
+                   
             if not network_type:
                 # tenant network
                 network_type = self.tenant_network_type
@@ -280,45 +307,86 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
             # the network_binding record is deleted via cascade from
             # the network record, so explicit removal is not necessary
         if self.agent_rpc:
-            self.notifier.network_delete(self.rpc_context, net_id)
+            self.notifier.network_delete(context, net_id)
 
     def get_network(self, context, net_id, fields=None):
-        net = super(MellanoxEswitchPlugin, self).get_network(context, net_id, None)
-        self._extend_network_dict_provider(context, net)
-        self._extend_network_dict_l3(context, net)
+        session = context.session
+        with session.begin(subtransactions=True):
+            net = super(MellanoxEswitchPlugin, self).get_network(context, net_id, None)
+            self._extend_network_dict_provider(context, net)
+            self._extend_network_dict_l3(context, net)
         return self._fields(net, fields)
 
     def get_networks(self, context, filters=None, fields=None):
-        nets = super(MellanoxEswitchPlugin, self).get_networks(context, filters,
-                                                             None)
-        for net in nets:
-            self._extend_network_dict_provider(context, net)
-            self._extend_network_dict_l3(context, net)
-
-        # TODO(rkukura): Filter on extended provider attributes.
-        nets = self._filter_nets_l3(context, nets, filters)
+        session = context.session
+        with session.begin(subtransactions=True):
+            nets = super(MellanoxEswitchPlugin, self).get_networks(context,
+                                                                 filters,
+                                                                 None)
+            for net in nets:
+                self._extend_network_dict_provider(context, net)
+                self._extend_network_dict_l3(context, net)
+            # TODO(rkukura): Filter on extended provider attributes.
+            nets = self._filter_nets_l3(context, nets, filters)
         return [self._fields(net, fields) for net in nets]
     
+    
+    def _extend_port_dict_binding(self, context, port):
+        if self._check_view_auth(context, port, self.binding_view):
+            port_binding = db.get_port_profile_binding(context.session, port['id'])
+            if port_binding:
+                port[portbindings.VIF_TYPE] = port_binding.vnic_type
+            port[portbindings.CAPABILITIES] = {
+                portbindings.CAP_PORT_FILTER:
+                'security-group' in self.supported_extension_aliases}
+            binding = db.get_network_binding(context.session,
+                                                port['network_id'])
+            port[portbindings.PROFILE] = {'physical_network': binding.physical_network}
+        return port
+    
+    def create_port(self, context, port):
+        LOG.debug(_("create_port with %s"),port)
+        vnic_type = self._process_port_binding_create(context,port['port'])
+        port = super(MellanoxEswitchPlugin, self).create_port(context, port)
+        db.add_port_profile_binding(context.session, port['id'], vnic_type)
+        return self._extend_port_dict_binding(context, port)
+    
+    def get_port(self, context, id, fields=None):
+        port = super(MellanoxEswitchPlugin, self).get_port(context, id, fields)
+        return self._fields(self._extend_port_dict_binding(context, port),
+                            fields)
+
+    def get_ports(self, context, filters=None, fields=None):
+        ports = super(MellanoxEswitchPlugin, self).get_ports(
+            context, filters, fields)
+        return [self._fields(self._extend_port_dict_binding(context, port),
+                             fields) for port in ports]
+
     def update_port(self, context, port_id, port):
-        if self.agent_rpc:
-            original_port = super(MellanoxEswitchPlugin, self).get_port(context,
-                                                                      port_id)
-        port = super(MellanoxEswitchPlugin, self).update_port(context, port_id, port)
-        if self.agent_rpc:
+        original_port = super(MellanoxEswitchPlugin, self).get_port(context, port_id)
+        session = context.session
+        with session.begin(subtransactions=True):
+            port = super(MellanoxEswitchPlugin, self).update_port(context, port_id, port)
+
+        if  self.agent_rpc:
             if original_port['admin_state_up'] != port['admin_state_up']:
                 binding = db.get_network_binding(context.session,
                                                  port['network_id'])
-                self.notifier.port_update(self.rpc_context, port,
+                self.notifier.port_update(context, port,
                                           binding.physical_network,
                                           binding.network_type,
                                           binding.segmentation_id)
-        return port
+                
+        return self._extend_port_dict_binding(context, port)
         
-    def delete_port(self, context, id, l3_port_check=True):
-
+    def delete_port(self, context, port_id, l3_port_check=True):
         # if needed, check to see if this is a port owned by
         # and l3-router.  If so, we should prevent deletion.
         if l3_port_check:
-            self.prevent_l3_port_deletion(context, id)
-        self.disassociate_floatingips(context, id)
-        return super(MellanoxEswitchPlugin, self).delete_port(context, id)
+            self.prevent_l3_port_deletion(context, port_id)
+        
+        session = context.session
+        with session.begin(subtransactions=True):
+            self.disassociate_floatingips(context, port_id)
+            
+            return super(MellanoxEswitchPlugin, self).delete_port(context, port_id)

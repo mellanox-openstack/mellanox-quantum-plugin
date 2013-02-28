@@ -18,6 +18,7 @@ import unittest2
 from quantum.common import exceptions as q_exc
 from quantum.db import api as db
 from quantum.plugins.mlnx.db import mlnx_db_v2 as mlnx_db
+from quantum.tests.unit import test_db_plugin as test_plugin
 
 PHYS_NET = 'physnet1'
 PHYS_NET_2 = 'physnet2'
@@ -145,22 +146,26 @@ class SegmentationIdAllocationTest(unittest2.TestCase):
         self.assertIsNone(mlnx_db.get_network_state(PHYS_NET, vlan_id))
 
 
-class NetworkBindingsTest(unittest2.TestCase):
+class NetworkBindingsTest(test_plugin.QuantumDbPluginV2TestCase):
     def setUp(self):
+        super(NetworkBindingsTest, self).setUp()
         mlnx_db.initialize()
         self.session = db.get_session()
+
 
     def tearDown(self):
         db.clear_db()
 
     def test_add_network_binding(self):
-        self.assertIsNone(mlnx_db.get_network_binding(self.session,
-                                                    TEST_NETWORK_ID))
-        mlnx_db.add_network_binding(self.session, TEST_NETWORK_ID,NET_TYPE, PHYS_NET,
-                                  1234)
-        binding = mlnx_db.get_network_binding(self.session, TEST_NETWORK_ID)
-        self.assertIsNotNone(binding)
-        self.assertEqual(binding.network_id, TEST_NETWORK_ID)
-        self.assertEqual(binding.network_type,NET_TYPE)
-        self.assertEqual(binding.physical_network, PHYS_NET)
-        self.assertEqual(binding.segmentation_id, 1234)
+        with self.network() as network:
+            TEST_NETWORK_ID = network['network']['id']
+            self.assertIsNone(mlnx_db.get_network_binding(self.session,
+                                                        TEST_NETWORK_ID))
+            mlnx_db.add_network_binding(self.session, TEST_NETWORK_ID,NET_TYPE,PHYS_NET, 1234)
+            binding = mlnx_db.get_network_binding(self.session, TEST_NETWORK_ID)
+            self.assertIsNotNone(binding)
+
+            self.assertEqual(binding.network_id, TEST_NETWORK_ID)
+            self.assertEqual(binding.network_type,NET_TYPE)
+            self.assertEqual(binding.physical_network, PHYS_NET)
+            self.assertEqual(binding.segmentation_id, 1234)

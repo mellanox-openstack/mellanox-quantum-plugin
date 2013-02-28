@@ -15,7 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from quantum.openstack.common import cfg
+from oslo.config import cfg
+from quantum.agent.common import config
+from quantum.plugins.mlnx.common import constants
 
 DEFAULT_VLAN_RANGES = ['default:1:1000']
 DEFAULT_INTERFACE_MAPPINGS = []
@@ -30,25 +32,23 @@ vlan_opts = [
                 "or <physical_network>"),
 ]
 
-database_opts = [
-    cfg.StrOpt('sql_connection', default='sqlite://'),
-    cfg.IntOpt('sql_max_retries', default=-1),
-    cfg.IntOpt('reconnect_interval', default=2),
-]
 
 eswitch_opts = [
     cfg.ListOpt('physical_interface_mappings',
                 default=DEFAULT_INTERFACE_MAPPINGS,
                 help="List of <physical_network>:<physical_interface>"),
+    cfg.StrOpt('vnic_type',
+               default=constants.VIF_TYPE_DIRECT,
+               help="type of VM network interface: direct or hosdev"),
 ]
 
 agent_opts = [
     cfg.IntOpt('polling_interval', default=2),
-    cfg.StrOpt('root_helper', default='sudo'),
     cfg.BoolOpt('rpc', default=True),
 ]
 
 cfg.CONF.register_opts(vlan_opts, "VLANS")
-cfg.CONF.register_opts(database_opts, "DATABASE")
 cfg.CONF.register_opts(eswitch_opts, "ESWITCH")
 cfg.CONF.register_opts(agent_opts, "AGENT")
+config.register_agent_state_opts_helper(cfg.CONF)
+config.register_root_helper(cfg.CONF)

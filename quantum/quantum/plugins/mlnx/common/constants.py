@@ -15,12 +15,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+LOCAL_VLAN_ID = -2
 FLAT_VLAN_ID = -1
 VLAN_ID_MIN = 1
 VLAN_ID_MAX = 4096
 
 # Values for network_type
+TYPE_LOCAL = 'local'
 TYPE_FLAT = 'flat'
 TYPE_VLAN = 'vlan'
 TYPE_IB = 'ib'
 TYPE_NONE = 'none'
+
+VIF_TYPE_DIRECT = 'direct'
+VIF_TYPE_HOSTDEV = 'hostdev'
+
+VNIC_TYPE = 'vnic_type'

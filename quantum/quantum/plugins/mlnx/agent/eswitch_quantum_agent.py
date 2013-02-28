@@ -20,16 +20,20 @@ import socket
 import sys
 import time
 
+from oslo.config import cfg
 from quantum.agent import rpc as agent_rpc
 from quantum.common import config as logging_config
 from quantum.common import topics
-from quantum.openstack.common import context
-from quantum.openstack.common import cfg
+from quantum.common import utils as q_utils
+from quantum import context
 from quantum.openstack.common import log as logging
+from quantum.common import constants as q_constants
+from quantum.openstack.common import loopingcall
 from quantum.openstack.common.rpc import dispatcher
 from quantum.plugins.mlnx.agent import utils
 from quantum.plugins.mlnx.common import config
 from quantum.plugins.mlnx.common import constants
+
 
 LOG = logging.getLogger(__name__)
 
@@ -194,18 +198,36 @@ class MlxEswitchQuantumAgent(object):
         self._polling_interval = cfg.CONF.AGENT.polling_interval
         #self._root_helper = cfg.CONF.AGENT.root_helper
         self._setup_eswitches(interface_mapping)
+        self.agent_state = {
+            'binary': 'quantum-mlnx-agent',
+            'host': cfg.CONF.host,
+            'topic': q_constants.L2_AGENT_TOPIC,
+            'configurations': interface_mapping,
+            'agent_type': 'eSwitch agent',
+            'start_flag': True}
         self._setup_rpc()
 
     def _setup_eswitches(self,interface_mapping):
         self.eswitch = EswitchMngr(interface_mapping)
         
+    def _report_state(self):
+        try:
+            devices = len(self.eswitch.get_vnics_mac())
+            self.agent_state.get('configurations')['devices'] = devices
+            self.state_rpc.report_state(self.context,
+                                        self.agent_state)
+            self.agent_state.pop('start_flag', None)
+        except Exception:
+            LOG.exception("Failed reporting state!")
+        
     def _setup_rpc(self):
-        self.agent_id = 'mlx-agent.%s' % socket.gethostname()
+        self.agent_id = 'mlnx-agent.%s' % socket.gethostname()
         self.topic = topics.AGENT
+        
         self.plugin_rpc = agent_rpc.PluginApi(topics.PLUGIN)
+
         # RPC network init
-        self.context = context.RequestContext('quantum', 'quantum',
-                                              is_admin=False)
+        self.context = context.get_admin_context_without_session()
         # Handle updates from service
         self.callbacks = MlxEswitchRpcCallbacks(self.context,self.eswitch)
         self.dispatcher = self.callbacks.create_rpc_dispatcher()
@@ -215,7 +237,13 @@ class MlxEswitchQuantumAgent(object):
         self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)
-  
+        
+        report_interval = cfg.CONF.AGENT.report_interval
+        if report_interval:
+            heartbeat = loopingcall.LoopingCall(self._report_state)
+            heartbeat.start(interval=report_interval)
+        
+          
     def update_ports(self, registered_ports):
         ports = self.eswitch.get_vnics_mac()
         if ports == registered_ports:
@@ -267,14 +295,13 @@ class MlxEswitchQuantumAgent(object):
             if 'port_id' in dev_details:
                 LOG.info(_("Port %s updated"),device)
                 LOG.debug(_("Device details %s"),str(dev_details))
-                self.treat_vif_port(
-                    dev_details['port_id'],
-                    dev_details['port_mac'],
-                    dev_details['network_id'],
-                    dev_details['network_type'],
-                    dev_details['physical_network'],
-                    dev_details['vlan_id'],
-                    dev_details['admin_state_up'])
+                self.treat_vif_port(dev_details['port_id'],
+                                    dev_details['port_mac'],
+                                    dev_details['network_id'],
+                                    dev_details['network_type'],
+                                    dev_details['physical_network'],
+                                    dev_details['vlan_id'],
+                                    dev_details['admin_state_up'])
             else:
                 LOG.debug("Device with mac_address %s not defined on Quantum Plugin", device)
         return resync
@@ -301,7 +328,9 @@ class MlxEswitchQuantumAgent(object):
     def daemon_loop(self):
         sync = True
         ports = set()
-
+        
+        LOG.info(_("eSwitch Agent Started!"))
+        
         while True:
             try:
                 start = time.time()
@@ -309,6 +338,7 @@ class MlxEswitchQuantumAgent(object):
                     LOG.info(_("Agent out of sync with plugin!"))
                     ports.clear()
                     sync = False
+                    
                 port_info = self.update_ports(ports)
                 # notify plugin about port deltas
                 if port_info:
@@ -328,6 +358,7 @@ class MlxEswitchQuantumAgent(object):
                             "(%(polling_interval)s vs. %(elapsed)s)"),
                           {'polling_interval': self._polling_interval,
                            'elapsed': elapsed})
+                
 
 def parse_mappings(interface_mappings, mapping):
     physical_network, physical_interface = mapping.split(':')
@@ -335,21 +366,20 @@ def parse_mappings(interface_mappings, mapping):
     LOG.debug("physical network %s mapped to physical interface %s" % (physical_network, physical_interface))
 
 def main():
-    #eventlet.monkey_patch(os=False, thread=False)
-    eventlet.monkey_patch()
-    cfg.CONF(args=sys.argv, project='quantum')
+    eventlet.monkey_patch(os=False, thread=False)
+    #eventlet.monkey_patch()
+    cfg.CONF(project='quantum')
     logging_config.setup_logging(cfg.CONF)
 
-    interface_mappings = {}
-    for mapping in cfg.CONF.ESWITCH.physical_interface_mappings:
-        try:
-            parse_mappings(interface_mappings, mapping)
-        except ValueError as e:
-            LOG.error(_("Parsing physical_interface_mappings failed: %s."
-                  " Agent terminated!"), e)
-            sys.exit(1)
+    try:
+        interface_mappings = q_utils.parse_mappings(
+            cfg.CONF.ESWITCH.physical_interface_mappings)
+    except ValueError as e:
+        LOG.error(_("Parsing physical_interface_mappings failed: %s."
+                    " Agent terminated!"), e)
+        sys.exit(1)
+    LOG.info(_("Interface mappings: %s"), interface_mappings)
 
-    LOG.info(_("Interface mappings: %s") % interface_mappings)
     agent = None
     try:
         agent = MlxEswitchQuantumAgent(interface_mappings)
@@ -357,11 +387,12 @@ def main():
         LOG.error(_("failed to setupeSwitch Daemon with physical_interface_mappings: %s"
                     "Agent terminated!"),e)
         sys.exit(1)
-
+    
     # Start everything.
-    LOG.info(_("Agent initialised successfully, now running... "))
+    LOG.info(_("Agent initialized successfully, now running... "))
     agent.daemon_loop()
     sys.exit(0)
+  
     
 if __name__ == '__main__':
     main()

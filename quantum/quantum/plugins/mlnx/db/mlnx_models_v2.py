@@ -61,3 +61,19 @@ class NetworkBinding(model_base.BASEV2):
                                                self.physical_network,
                                                self.segmentation_id)
 
+class PortProfileBinding(model_base.BASEV2):
+    """Represents port profile binding to the port on virtual network """
+    __tablename__ = 'port_profile'
+
+    port_id = sa.Column(sa.String(36),
+                           sa.ForeignKey('ports.id', ondelete="CASCADE"),
+                           primary_key=True)
+    vnic_type = sa.Column(sa.String(32), nullable=False)
+
+    def __init__(self, port_id, vnic_type):
+        self.port_id = port_id
+        self.vnic_type = vnic_type
+
+    def __repr__(self):
+        return "<PortProfileBinding(%s,%s,%s,%d)>" % (self.port_id,
+                                               self.vnic_type)
