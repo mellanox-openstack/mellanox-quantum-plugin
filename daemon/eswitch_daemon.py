@@ -19,7 +19,7 @@
 import json
 import sys
 import zmq
-from nova.openstack.common import cfg
+from oslo.config import cfg
 from nova.openstack.common import log as logging
 from common import config
 import msg_handler as message
@@ -100,7 +100,7 @@ class MlxEswitchDaemon(object):
                 polling_counter+=1
             
 def main():
-    cfg.CONF(args=sys.argv, project='mlnx_daemon')
+    cfg.CONF(project='mlnx_daemon')
     logging.setup('mlnx_daemon')
     try:
         daemon = MlxEswitchDaemon()

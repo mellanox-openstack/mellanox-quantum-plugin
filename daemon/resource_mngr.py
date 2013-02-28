@@ -79,8 +79,6 @@ class ResourceManager:
             else:
                 vf = os.readlink(vf_path).strip('../')
                 vfs.append(vf) 
-        #@todo remove Temporary workaround for last VF
-        vfs.pop()
         return (eths,vfs)
         
     def get_free_eths(self, fabric):

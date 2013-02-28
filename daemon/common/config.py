@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nova.openstack.common import cfg
+from oslo.config import cfg
 
 DEFAULT_INTERFACE_MAPPINGS = []
 

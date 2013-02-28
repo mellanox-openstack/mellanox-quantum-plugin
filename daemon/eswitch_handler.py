@@ -21,6 +21,7 @@ from utils.command_utils import execute
 from db import eswitch_db
 from resource_mngr import ResourceManager 
 from common.exceptions import MlxException
+from common import constants
 
 DEFAULT_MAC_ADDRESS = '00:00:00:00:00:01'
 LOG = logging.getLogger('mlnx_daemon')
@@ -32,8 +33,8 @@ class eSwitchHandler(object):
         self.pci_utils = pci_utils.pciUtils()
         self.rm = ResourceManager()
         self.devices = {
-                        'direct': set(),
-                        'hostdev':set()
+                        constants.VIF_TYPE_DIRECT: set(),
+                        constants.VIF_TYPE_HOSTDEV:set()
                         }
         if fabrics:
             self.add_fabrics(fabrics)
@@ -60,15 +61,16 @@ class eSwitchHandler(object):
         vfs = self.rm.get_free_vfs(fabric)
         eths = self.rm.get_free_eths(fabric)
         for vf in vfs:
-            self.eswitches[fabric].create_port(vf, 'hostdev')
+            self.eswitches[fabric].create_port(vf, constants.VIF_TYPE_HOSTDEV)
         for eth in eths:
-            self.eswitches[fabric].create_port(eth, 'direct')
+            self.eswitches[fabric].create_port(eth, constants.VIF_TYPE_DIRECT)
 
     def _treat_added_devices(self, devices,dev_type):
         for dev, mac, fabric in devices:
             if fabric:
                 self.rm.allocate_device(fabric, dev_type=dev_type, dev=dev)
                 self.eswitches[fabric].attach_vnic(port_name=dev, device_id=None, vnic_mac=mac)
+                self.eswitches[fabric].plug_nic(port_name=dev)
             else:
                 LOG.debug("No Fabric defined for device %s", dev)
                 
@@ -116,7 +118,7 @@ class eSwitchHandler(object):
                 try:
                     dev = self.rm.allocate_device(fabric, vnic_type)
                     if eswitch.attach_vnic(dev, device_id, vnic_mac):
-                        if vnic_type == 'hostdev':
+                        if vnic_type == constants.VIF_TYPE_HOSTDEV:
                             pf, vf_index = self._get_device_pf_vf(fabric, vnic_type, dev)
                             self._config_vf_mac_address(pf, vf_index, vnic_mac)
                     else:
@@ -128,6 +130,18 @@ class eSwitchHandler(object):
         else:
             LOG.error("No eSwitch found for Fabric %s",fabric)
         return dev
+    
+    def plug_nic(self, fabric, device_id, vnic_mac):
+        dev = None
+        eswitch = self._get_vswitch_for_fabric(fabric)
+        if eswitch:
+            dev = eswitch.get_dev_for_vnic(vnic_mac)
+            if dev:
+                eswitch.plug_nic(dev)
+        else:
+            LOG.error("No eSwitch found for Fabric %s",fabric)
+        return dev
+
          
     def delete_port(self, fabric, vnic_mac):
         """
@@ -139,7 +153,7 @@ class eSwitchHandler(object):
             dev = eswitch.detach_vnic(vnic_mac)
             if dev:
                 dev_type = eswitch.get_dev_type(dev)
-                if dev_type == 'hostdev':
+                if dev_type == constants.VIF_TYPE_HOSTDEV:
                     pf, vf_index = self._get_device_pf_vf(fabric, dev_type, dev)
                     #unset MAC to default value
                     self._config_vf_mac_address(pf, vf_index, DEFAULT_MAC_ADDRESS)
@@ -152,7 +166,7 @@ class eSwitchHandler(object):
         """
         @todo: handle failures
         """
-        ret = self.set_vlan(fabric, vnic_mac, 0)
+        ret = self.set_vlan(fabric, vnic_mac, constants.UNTAGGED_VLAN_ID)
         self.port_down(fabric, vnic_mac)
         eswitch = self._get_vswitch_for_fabric(fabric)
         eswitch.port_release(vnic_mac)
@@ -167,26 +181,29 @@ class eSwitchHandler(object):
             else:
                 LOG.debug("No device for MAC %s",vnic_mac)
                 
-                
-    
     def set_vlan(self, fabric, vnic_mac, vlan):
         eswitch = self._get_vswitch_for_fabric(fabric)
         if eswitch:
             eswitch.set_vlan(vnic_mac, vlan)
             dev = eswitch.get_dev_for_vnic(vnic_mac)
+            state = eswitch.get_port_state(dev)
             if dev:
-                vnic_type = eswitch.get_port_type(dev)
-                pf, vf_index = self._get_device_pf_vf(fabric, vnic_type, dev)
-                if pf and vf_index:
-                    try:
-                        self._config_vlan_priority(pf, vf_index, dev, vlan)
-                        return True
-                    except RuntimeError:
-                        LOG.error('Set VLAN operation failed')    
-                else:
-                    LOG.error('Invalid VF/PF index for device %s',dev)         
-        return False
-        
+                if state in (constants.VPORT_STATE_ATTACHED, constants.VPORT_STATE_UNPLUGGED):
+                    vnic_type = eswitch.get_port_type(dev)
+                    pf, vf_index = self._get_device_pf_vf(fabric, vnic_type, dev)
+                    if pf and vf_index:
+                        try:
+                            if vnic_type == constants.VIF_TYPE_DIRECT:
+                                self._config_vlan_priority_direct(pf, vf_index, dev, vlan)
+                            else:
+                                self._config_vlan_priority_hostdev(pf, vf_index, dev, vlan)
+                            return True
+                        except RuntimeError:
+                            LOG.error('Set VLAN operation failed')    
+                    else:
+                        LOG.error('Invalid VF/PF index for device %s',dev)         
+        return False           
+            
     def _get_vswitch_for_fabric(self, fabric):
         if fabric in self.eswitches:
             return self.eswitches[fabric]
@@ -202,12 +219,17 @@ class eSwitchHandler(object):
         cmd = ['ip', 'link','set',pf, 'vf', vf_index ,'mac',vnic_mac]
         execute(cmd, root_helper='sudo')
             
-    def _config_vlan_priority(self, pf, vf_index, dev, vlan,priority='0'):
-        self._config_port_down(dev)
+    def _config_vlan_priority_direct(self, pf, vf_index, dev, vlan,priority='0'):
+        vf = self.pci_utils.get_eth_vf(dev)
+        self.pci_utils.set_vf_binding(vf)
         cmd = ['ip', 'link','set',pf , 'vf', vf_index, 'vlan', vlan, 'qos', priority]
         execute(cmd, root_helper='sudo')
+        self.pci_utils.set_vf_binding(vf,is_bind=True)
         self._config_port_up(dev)
-            
+        
+    def _config_vlan_priority_hostdev(self, pf, vf_index, dev, vlan,priority='0'):
+        LOG.warning("VST for hostdev is currently not supported")
+        
     def _config_port_down(self,dev):
         cmd = ['ip', 'link', 'set', dev, 'down']       
         execute(cmd, root_helper='sudo')

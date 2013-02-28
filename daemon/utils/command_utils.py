@@ -43,7 +43,6 @@ def execute(cmd, root_helper=None, process_input=None, addl_env=None,
     obj.stdin.close()
     m = ("\nCommand: %s\nExit code: %s\nStdout: %r\nStderr: %r" %
         (cmd, obj.returncode, _stdout, _stderr))
-    print m
     LOG.debug(m)
     if obj.returncode and check_exit_code:
         raise RuntimeError(m)

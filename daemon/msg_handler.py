@@ -16,6 +16,7 @@
 # limitations under the License.
 
 from nova.openstack.common import log as logging
+from common import constants
 
 LOG = logging.getLogger('mlnx_daemon')
 
@@ -31,7 +32,14 @@ class BasicMessageHandler(object):
         ret = False
         if set(self.msg.keys()) >= self.MSG_ATTRS_VALID_MAP:
             ret = True
+        if 'vnic_type' in self.msg.keys():
+            ret = self.validate_vnic_type(self.msg['vnic_type'])
         return ret
+    
+    def validate_vnic_type(self,vnic_type):
+        if vnic_type in (constants.VIF_TYPE_DIRECT, constants.VIF_TYPE_HOSTDEV):
+            return True
+        return False
     
     def build_response(self,status,reason=None, response=None):
         if status:
@@ -56,6 +64,22 @@ class AttachVnic(BasicMessageHandler):
             return self.build_response(True, response= {'dev':dev})
         else:
             return self.build_response(False, reason = 'Attach vnic failed')
+        
+class PlugVnic(BasicMessageHandler):
+    MSG_ATTRS_VALID_MAP = set(['fabric','device_id','vnic_mac'])
+    
+    def __init__(self,msg):
+        BasicMessageHandler.__init__(self,msg)
+
+    def execute(self, eSwitchHandler):    
+        fabric     = self.msg['fabric']
+        device_id  = self.msg['device_id']
+        vnic_mac   = (self.msg['vnic_mac']).lower() 
+        dev = eSwitchHandler.plug_nic(fabric, device_id, vnic_mac)
+        if dev:
+            return self.build_response(True, response= {'dev':dev})
+        else:
+            return self.build_response(False, reason = 'Plug vnic failed')
               
 class DetachVnic(BasicMessageHandler):
     MSG_ATTRS_VALID_MAP = set(['fabric','vnic_mac'])
@@ -175,13 +199,16 @@ class MessageDispatch(object):
                'port_up':PortUp,
                'port_down':PortDown,
                'define_fabric_mapping':SetFabricMapping,
+               'plug_nic':PlugVnic,
                }
     def __init__(self,eSwitchHandler):
         self.eSwitchHandler = eSwitchHandler
     
     def handle_msg(self, msg):
+        LOG.debug("Handling message - %s",msg)
         result = {}
         action = msg.pop('action')
+        
         if action in MessageDispatch.MSG_MAP.keys():
             msg_handler = MessageDispatch.MSG_MAP[action](msg)
             if msg_handler.validate():

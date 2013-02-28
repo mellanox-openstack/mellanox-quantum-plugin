@@ -16,6 +16,7 @@
 # limitations under the License.
 
 from nova.openstack.common import log as logging
+from common import constants
 
 LOG = logging.getLogger('mlnx_daemon')
 
@@ -26,21 +27,31 @@ class eSwitchDB():
             self.port_policy = {}
                            
         def create_port(self, port_name, port_type):
-            self.port_table.update({port_name: {'type':port_type, 'vnic':None}})
+            self.port_table.update({port_name: {'type':port_type,
+                                                'vnic':None,
+                                                'state':None}})
+
+        def plug_nic(self, port_name):
+            self.port_table[port_name]['state'] = constants.VPORT_STATE_ATTACHED
 
         def get_ports(self):
             return self.port_table
 
         def get_port_type(self,dev):
             return self.port_table[dev]['type']
+        
+        def get_port_state(self, dev):
+            return self.port_table[dev]['state']
+
             
         def get_attached_vnics(self):
             vnics = {}
             for port in self.port_table.values():
                 vnic_mac = port['vnic']
-                if vnic_mac:
-                    vnics[vnic_mac]={'mac':vnic_mac,
-                                    'device_id':self.port_policy[vnic_mac]['device_id']}
+                state   = port['state']
+                if vnic_mac and state == constants.VPORT_STATE_ATTACHED:
+                     vnics[vnic_mac]={'mac':vnic_mac,
+                                     'device_id':self.port_policy[vnic_mac]['device_id']}
             return vnics      
                  
         def get_port_policy(self):
@@ -83,6 +94,7 @@ class eSwitchDB():
             
         def attach_vnic(self,port_name, device_id, vnic_mac):
             self.port_table[port_name]['vnic'] = vnic_mac
+            self.port_table[port_name]['state'] = constants.VPORT_STATE_PENDING
             dev = self.get_dev_for_vnic(vnic_mac)
             if not dev:
                 self.port_policy.update({vnic_mac: {'vlan':None,
@@ -98,10 +110,13 @@ class eSwitchDB():
                 for attr in ['vnic_mac','device_id']:
                     self.port_policy[vnic_mac][attr] = None
                 self.port_table[dev]['vnic'] = None
+                self.port_table[dev]['state'] = constants.VPORT_STATE_UNPLUGGED
             return dev
         
         def port_release(self, vnic_mac):
             try:
+                dev = self.get_dev_for_vnic(vnic_mac)
+                self.port_table[dev]['state'] = None
                 vnic = self.port_policy.pop(vnic_mac)
                 vnic['type'] = self.port_table[vnic['dev']]['type']
                 return vnic

@@ -27,6 +27,8 @@ class pciUtils:
     ETH_PF_NETDEV = "/sys/class/net/DEV/device/physfn/net"
     ETH_VF =        "/sys/class/net/ETH/device"
     ETH_PORT =      "/sys/class/net/ETH/dev_id"
+    VF_BIND_PATH =  "/sys/bus/pci/drivers/mlx4_core/bind"
+    VF_UNBIND_PATH =  "/sys/bus/pci/drivers/mlx4_core/unbind"
    
     def __init__(self):
         pass
@@ -99,5 +101,16 @@ class pciUtils:
     
     def _calc_vf_index(self, dev):
         vf_address = re.split(r"\.|\:", dev)
-        vf_index = int(vf_address[2]) * 8 + int(vf_address[3])
+        vf_index = int(vf_address[2]) * 8 + int(vf_address[3]) - 1
         return vf_index
+
+    def set_vf_binding(self, vf, is_bind=False):
+        if is_bind:
+            cmd = ["echo", vf, ">",pciUtils.VF_BIND_PATH]
+        else:
+            cmd = ["echo", vf, ">",pciUtils.VF_UNBIND_PATH]
+        try:
+            result = execute(cmd, root_helper='sudo')
+        except Exception,e:
+            LOG.warning("Failed to execute command %s due to %s",cmd,e)
+            raise
