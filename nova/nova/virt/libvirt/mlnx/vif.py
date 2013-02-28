@@ -17,62 +17,86 @@
 
 import re
 from nova import exception
-from nova import flags
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
 from nova.virt import vif
 from nova.virt.libvirt.mlnx import conn_utils 
 from nova.virt.libvirt.mlnx import config  as mlxconfig
 
+
 mlnx_vif_opts = [
-    cfg.StrOpt('vnic_type',
-        default='direct',
-        help="vNIC type: direct or hostdev"),
     cfg.StrOpt('fabric',
                 default='default',
                 help='Physical Network Name'),
 ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(mlnx_vif_opts)
+CONF = cfg.CONF
+CONF.register_opts(mlnx_vif_opts)
 
 LOG = logging.getLogger(__name__)
 HEX_BASE = 16
 
-class MlxEthVIFDriver(vif.VIFDriver):
-    """VIF driver for Mellanox Embedded switch Plugin"""
-    def __init__(self):
-        self.conn_util = conn_utils.ConnUtil()
-        self.vnic_type = FLAGS.vnic_type
-        self.fabric = FLAGS.fabric
 
-    def get_config(self, mac_address, dev):
+VIF_TYPE_DIRECT = 'direct'
+VIF_TYPE_HOSTDEV = 'hostdev'
+SUPPORTED_VIF_TYPES = (VIF_TYPE_DIRECT, VIF_TYPE_HOSTDEV)
+
+class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
+    """VIF driver for Mellanox Embedded switch Plugin"""
+    def __init__(self,get_connection):
+        super(MlxEthVIFDriver, self).__init__(get_connection)
+        self.conn_util = conn_utils.ConnUtil()
+        self.fabric =  CONF.fabric
+
+    def get_dev_config(self, mac_address, dev):
         conf = None
-        if self.vnic_type == 'direct':
+        if self.vnic_type == VIF_TYPE_DIRECT:
             conf = mlxconfig.MlxLibvirtConfigGuestInterface()
             conf.source_dev = dev
             conf.mac_addr = mac_address
-        elif self.vnic_type == 'hostdev':
+        elif self.vnic_type == VIF_TYPE_HOSTDEV:
             conf = mlxconfig.MlxLibvirtConfigGuestDevice()
             self._set_source_address(conf , dev)
-        else:
-            LOG.warning(_("Unknown vnic type %s"),self.vnic_type)
         return conf
-
+    
+    def get_config(self, instance, network, mapping, image_meta):
+        vif_type = mapping.get('vif_type')
+        LOG.debug(_("vif_type=%(vif_type)s instance=%(instance)s "
+                    "network=%(network)s mapping=%(mapping)s")
+                  % locals())
+ 
+        if vif_type is None:
+            raise exception.NovaException(
+                _("vif_type parameter must be present "
+                  "for this vif_driver implementation"))
+            
+        if vif_type not in SUPPORTED_VIF_TYPES:
+            raise exception.NovaException(
+                _("Unexpected vif_type=%s") % vif_type)
+            
+        vnic_mac = mapping['mac']
+        device_id = instance['uuid']
+        try:
+            dev = self.conn_util.allocate_nic(vnic_mac, device_id, self.fabric, vif_type)
+        except Exception:
+             raise exception.NovaException(_("Processing Failure during  vNIC allocation"))
+        #Allocation Failed
+        if dev is None:
+            raise exception.NovaException(_("Failed to allocate device for vNIC"))
+        conf = self.get_dev_config(vnic_mac, dev)
+        return conf
+ 
     def plug(self, instance, vif):
         network, mapping = vif
         vnic_mac = mapping['mac']
         device_id = instance['uuid']
         try:
-            dev = self.conn_util.allocate_nic(vnic_mac, device_id, self.fabric, self.vnic_type)
+            dev = self.conn_util.plug_nic(vnic_mac, device_id, self.fabric) 
         except Exception:
-            raise exception.VirtualInterfaceCreateException()
-        #Allocation Failed
+            raise exception.NovaException(_("Processing Failure during vNIC plug"))
         if dev is None:
-            raise exception.VirtualInterfaceCreateException()
-        conf = self.get_config(vnic_mac, dev)
-        return conf
-
+            raise exception.NovaException(_("Cannot plug VIF with no allocated device "))
+        
     def unplug(self, instance, vif):
         network, mapping = vif
         vnic_mac = mapping['mac']
