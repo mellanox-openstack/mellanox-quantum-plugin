@@ -23,11 +23,11 @@ import time
 from oslo.config import cfg
 from quantum.agent import rpc as agent_rpc
 from quantum.common import config as logging_config
+from quantum.common import constants as q_constants
 from quantum.common import topics
 from quantum.common import utils as q_utils
 from quantum import context
 from quantum.openstack.common import log as logging
-from quantum.common import constants as q_constants
 from quantum.openstack.common import loopingcall
 from quantum.openstack.common.rpc import dispatcher
 from quantum.plugins.mlnx.agent import utils
@@ -44,115 +44,108 @@ class EswitchMngr(object):
         self.interface_mappings = interface_mappings
         self.network_map = {}
         self.utils.define_fabric_mappings(interface_mappings)
-    
-    def get_port_id_by_mac(self,port_mac):
-        for network_id, data in self.network_map.iteritems(): 
+
+    def get_port_id_by_mac(self, port_mac):
+        for network_id, data in self.network_map.iteritems():
             for port in data['ports']:
                 if port['port_mac'] == port_mac:
                     return port['port_id']
         return port_mac
-        
-    def get_vnics_mac(self):    
-        return set(self.utils.get_attached_vnics().keys()) 
-    
-    def vnic_port_exists(self,network_id,physical_network, port_mac):  
+
+    def get_vnics_mac(self):
+        return set(self.utils.get_attached_vnics().keys())
+
+    def vnic_port_exists(self, network_id, physical_network, port_mac):
         if port_mac in self.utils.get_attached_vnics():
             return True
         return False
-          
-    def remove_network(self,network_id,physical_network,vlan_id):
+
+    def remove_network(self, network_id, physical_network, vlan_id):
         if network_id in self.network_map:
             del self.network_map[network_id]
         else:
             LOG.debug(_("Network %s not defined on Agent."), network_id)
-    
-    def port_down(self,network_id,physical_network,port_mac):
+
+    def port_down(self, network_id, physical_network, port_mac):
+        """ Check  internal network map for port data.
+            If port exists set port to Down
         """
-        @note: check  internal network map for port data
-            if port exists
-                set port to Down
-        """
-        for network_id, data in self.network_map.iteritems(): 
+        for network_id, data in self.network_map.iteritems():
             for port in data['ports']:
                 if port['port_mac'] == port_mac:
-                    self.utils.port_down(physical_network,port_mac)
+                    self.utils.port_down(physical_network, port_mac)
                     break
         else:
-            return        
-        LOG.info(_('Network %s is not available on this agent'),network_id)
-    
-    def port_up(self,network_id,network_type,
-                physical_network,seg_id,port_id,port_mac):
-        """
-        @note: update internal network map with port data
-               check if vnic defined
-                   configure eswitch vport
-                   set port to Up
+            return
+        LOG.info(_('Network %s is not available on this agent'), network_id)
+
+    def port_up(self, network_id, network_type,
+                physical_network, seg_id, port_id, port_mac):
+        """ Update internal network map with port data.
+            - Check if vnic defined
+            - configure eswitch vport
+            - set port to Up
         """
         LOG.debug(_("Connecting port %s"), port_id)
-        
-        if network_id  not in self.network_map:  
-            self.provision_network(port_id,port_mac,
-                                   network_id,network_type,
-                                   physical_network,seg_id)
+
+        if network_id  not in self.network_map:
+            self.provision_network(port_id, port_mac,
+                                   network_id, network_type,
+                                   physical_network, seg_id)
         net_map = self.network_map[network_id]
-        net_map['ports'].append({'port_id':port_id,'port_mac':port_mac})
-        
+        net_map['ports'].append({'port_id': port_id, 'port_mac': port_mac})
+
         if network_type == constants.TYPE_VLAN:
-            LOG.info(_('Binding VLAN ID %s to eSwitch for vNIC  mac_address %s'),seg_id, port_mac)
+            LOG.info(_('Binding VLAN ID %s'
+                       'to eSwitch for vNIC mac_address %s'), seg_id, port_mac)
             self.utils.set_port_vlan_id(physical_network,
                                          seg_id,
                                          port_mac)
-            self.utils.port_up(physical_network,port_mac)
+            self.utils.port_up(physical_network, port_mac)
         elif network_type == constants.TYPE_IB:
             LOG.debug(_('Network Type IB currently not supported'))
         else:
             LOG.error(_('Unsupported network type %s'), network_type)
-                
 
-    def port_release(self,port_mac):
-        """
-    	@note: clear port configuration from eSwitch
-    	"""
-        for network_id, net_data in self.network_map.iteritems(): 
+    def port_release(self, port_mac):
+        """ Clear port configuration from eSwitch """
+        for network_id, net_data in self.network_map.iteritems():
             for port in net_data['ports']:
                 if port['port_mac'] == port_mac:
-                    self.utils.port_release(net_data['physical_network'],port['port_mac'])
+                    self.utils.port_release(net_data['physical_network'],
+                                            port['port_mac'])
                     break
         else:
-            return 
-        
-        LOG.info(_('Port_mac %s is not available on this agent'),port_mac)
-            
+            return
+        LOG.info(_('Port_mac %s is not available on this agent'), port_mac)
+
     def provision_network(self, port_id, port_mac,
                             network_id, network_type,
                             physical_network, segmentation_id):
         LOG.info(_("Provisioning network %s"), network_id)
-        
         if network_type == constants.TYPE_VLAN:
             #self.utils.define_vlan(physical_network,segmentation_id)
-            LOG.debug(_("creating VLAN Netowrk"))
+            LOG.debug(_("creating VLAN Network"))
         elif network_type == constants.TYPE_IB:
             LOG.debug(_("currently IB network provisioning is not supported"))
         else:
-            LOG.error(_("Cannot provision unknown network type %s for network %s"),
-                network_type, network_id)
+            LOG.error(_("Unknown network type %(network_type) "
+                        "for network %(network_id)"), locals())
             return
-
         data = {
             'physical_network': physical_network,
             'network_type': network_type,
             'ports': [],
             'vlan_id': segmentation_id}
-        
         self.network_map[network_id] = data
+
 
 class MlxEswitchRpcCallbacks():
 
     # Set RPC API version to 1.0 by default.
     RPC_API_VERSION = '1.0'
 
-    def __init__(self, context,eswitch):
+    def __init__(self, context, eswitch):
         self.context = context
         self.eswitch = eswitch
 
@@ -161,11 +154,11 @@ class MlxEswitchRpcCallbacks():
         network_id = kwargs.get('network_id')
         if not network_id:
             LOG.warning(_("Invalid Network ID, cannot remove Network"))
-        else:    
+        else:
             LOG.debug(_("Delete network %s"), network_id)
             vlan_id = kwargs.get('vlan_id')
             physical_network = kwargs.get('physical_network')
-            self.eswitch.remove_network(network_id,physical_network,vlan_id)
+            self.eswitch.remove_network(network_id, physical_network, vlan_id)
 
     def port_update(self, context, **kwargs):
         LOG.debug(_("port_update received"))
@@ -173,28 +166,38 @@ class MlxEswitchRpcCallbacks():
         vlan_id = kwargs.get('vlan_id')
         physical_network = kwargs.get('physical_network')
         net_type = kwargs.get('network_type')
-        net_id = port['network_id'] 
-        if self.eswitch.vnic_port_exists(net_id,physical_network,port['mac_address']):
+        net_id = port['network_id']
+        if self.eswitch.vnic_port_exists(net_id,
+                                         physical_network,
+                                         port['mac_address']):
             if port['admin_state_up']:
-                self.eswitch.port_up(net_id, net_type,physical_network, vlan_id,port['id'],port['mac_address'])
+                self.eswitch.port_up(net_id,
+                                     net_type,
+                                     physical_network,
+                                     vlan_id,
+                                     port['id'],
+                                     port['mac_address'])
             else:
-                self.eswitch.port_down(net_id,physical_network,port['mac_address'])
+                self.eswitch.port_down(net_id,
+                                       physical_network,
+                                       port['mac_address'])
         else:
             LOG.debug(_("No port %s defined on agent."), port['id'])
 
     def create_rpc_dispatcher(self):
-        '''Get the rpc dispatcher for this manager.
-
-        If a manager would like to set an rpc API version, or support more than
-        one class as the target of rpc messages, override this method.
-        '''
+        """ Get the rpc dispatcher for this manager.
+            If a manager would like to set an rpc API version,
+            or support more than one class as the target of rpc messages,
+            override this method.
+        """
         return dispatcher.RpcDispatcher([self])
+
 
 class MlxEswitchQuantumAgent(object):
     # Set RPC API version to 1.0 by default.
     RPC_API_VERSION = '1.0'
 
-    def __init__(self,interface_mapping):
+    def __init__(self, interface_mapping):
         self._polling_interval = cfg.CONF.AGENT.polling_interval
         #self._root_helper = cfg.CONF.AGENT.root_helper
         self._setup_eswitches(interface_mapping)
@@ -207,9 +210,9 @@ class MlxEswitchQuantumAgent(object):
             'start_flag': True}
         self._setup_rpc()
 
-    def _setup_eswitches(self,interface_mapping):
+    def _setup_eswitches(self, interface_mapping):
         self.eswitch = EswitchMngr(interface_mapping)
-        
+
     def _report_state(self):
         try:
             devices = len(self.eswitch.get_vnics_mac())
@@ -219,17 +222,16 @@ class MlxEswitchQuantumAgent(object):
             self.agent_state.pop('start_flag', None)
         except Exception:
             LOG.exception("Failed reporting state!")
-        
+
     def _setup_rpc(self):
         self.agent_id = 'mlnx-agent.%s' % socket.gethostname()
         self.topic = topics.AGENT
-        
         self.plugin_rpc = agent_rpc.PluginApi(topics.PLUGIN)
 
         # RPC network init
         self.context = context.get_admin_context_without_session()
         # Handle updates from service
-        self.callbacks = MlxEswitchRpcCallbacks(self.context,self.eswitch)
+        self.callbacks = MlxEswitchRpcCallbacks(self.context, self.eswitch)
         self.dispatcher = self.callbacks.create_rpc_dispatcher()
         # Define the listening consumers for the agent
         consumers = [[topics.PORT, topics.UPDATE],
@@ -237,13 +239,12 @@ class MlxEswitchQuantumAgent(object):
         self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)
-        
+
         report_interval = cfg.CONF.AGENT.report_interval
         if report_interval:
             heartbeat = loopingcall.LoopingCall(self._report_state)
             heartbeat.start(interval=report_interval)
-        
-          
+
     def update_ports(self, registered_ports):
         ports = self.eswitch.get_vnics_mac()
         if ports == registered_ports:
@@ -264,23 +265,30 @@ class MlxEswitchQuantumAgent(object):
             resync_b = self.treat_devices_removed(port_info['removed'])
         # If one of the above opertaions fails => resync with plugin
         return (resync_a | resync_b)
-    
-    def treat_vif_port(self, port_id,port_mac, 
+
+    def treat_vif_port(self, port_id, port_mac,
                        network_id, network_type,
-                       physical_network, segmentation_id, 
+                       physical_network, segmentation_id,
                        admin_state_up):
-        if self.eswitch.vnic_port_exists(network_id,physical_network, port_mac):
+        if self.eswitch.vnic_port_exists(network_id,
+                                         physical_network,
+                                         port_mac):
             if admin_state_up:
-                self.eswitch.port_up(network_id, network_type,physical_network, segmentation_id,port_id,port_mac)
+                self.eswitch.port_up(network_id,
+                                     network_type,
+                                     physical_network,
+                                     segmentation_id,
+                                     port_id,
+                                     port_mac)
             else:
-                self.eswitch.port_down(network_id,physical_network,port_mac)
+                self.eswitch.port_down(network_id, physical_network, port_mac)
         else:
             LOG.debug(_("No port %s defined on agent."), port_id)
 
     def treat_devices_added(self, devices):
         resync = False
         for device in devices:
-            LOG.info(_("Adding port with mac %s"),device)
+            LOG.info(_("Adding port with mac %s"), device)
             try:
                 dev_details = self.plugin_rpc.get_device_details(
                         self.context,
@@ -288,13 +296,13 @@ class MlxEswitchQuantumAgent(object):
                         self.agent_id)
             except Exception as e:
                 LOG.debug(_(
-                    "Unable to get device dev_details for device with mac_address %s: %s"),
-                    device, e)
+                    "Unable to get device dev_details for device "
+                    "with mac_address %s: due to %s"), device, e)
                 resync = True
                 continue
             if 'port_id' in dev_details:
-                LOG.info(_("Port %s updated"),device)
-                LOG.debug(_("Device details %s"),str(dev_details))
+                LOG.info(_("Port %s updated"), device)
+                LOG.debug(_("Device details %s"), str(dev_details))
                 self.treat_vif_port(dev_details['port_id'],
                                     dev_details['port_mac'],
                                     dev_details['network_id'],
@@ -303,7 +311,8 @@ class MlxEswitchQuantumAgent(object):
                                     dev_details['vlan_id'],
                                     dev_details['admin_state_up'])
             else:
-                LOG.debug("Device with mac_address %s not defined on Quantum Plugin", device)
+                LOG.debug("Device with mac_address %s not defined "
+                          "on Quantum Plugin", device)
         return resync
 
     def treat_devices_removed(self, devices):
@@ -320,17 +329,17 @@ class MlxEswitchQuantumAgent(object):
                     "Removing port failed for device %s: %s"),
                     device, e)
                 resync = True
-                continue           
-            LOG.info(_("Port %s updated."),device)
-            self.eswitch.port_release(device) 
+                continue
+            LOG.info(_("Port %s updated."), device)
+            self.eswitch.port_release(device)
         return resync
 
     def daemon_loop(self):
         sync = True
         ports = set()
-        
+
         LOG.info(_("eSwitch Agent Started!"))
-        
+
         while True:
             try:
                 start = time.time()
@@ -338,7 +347,7 @@ class MlxEswitchQuantumAgent(object):
                     LOG.info(_("Agent out of sync with plugin!"))
                     ports.clear()
                     sync = False
-                    
+
                 port_info = self.update_ports(ports)
                 # notify plugin about port deltas
                 if port_info:
@@ -358,16 +367,11 @@ class MlxEswitchQuantumAgent(object):
                             "(%(polling_interval)s vs. %(elapsed)s)"),
                           {'polling_interval': self._polling_interval,
                            'elapsed': elapsed})
-                
 
-def parse_mappings(interface_mappings, mapping):
-    physical_network, physical_interface = mapping.split(':')
-    interface_mappings[physical_network] = physical_interface
-    LOG.debug("physical network %s mapped to physical interface %s" % (physical_network, physical_interface))
 
 def main():
-    eventlet.monkey_patch(os=False, thread=False)
-    #eventlet.monkey_patch()
+    #eventlet.monkey_patch(os=False, thread=False)
+    eventlet.monkey_patch()
     cfg.CONF(project='quantum')
     logging_config.setup_logging(cfg.CONF)
 
@@ -384,15 +388,15 @@ def main():
     try:
         agent = MlxEswitchQuantumAgent(interface_mappings)
     except Exception, e:
-        LOG.error(_("failed to setupeSwitch Daemon with physical_interface_mappings: %s"
-                    "Agent terminated!"),e)
+        LOG.error(_("Failed on Agent initialisation : %s"
+                    "Agent terminated!"), e)
         sys.exit(1)
-    
+
     # Start everything.
-    LOG.info(_("Agent initialized successfully, now running... "))
+    LOG.info(_("Agent initialised successfully, now running... "))
     agent.daemon_loop()
     sys.exit(0)
-  
-    
+
+
 if __name__ == '__main__':
     main()

@@ -21,12 +21,13 @@ from quantum.openstack.common.rpc import proxy
 
 LOG = logging.getLogger(__name__)
 
+
 class AgentNotifierApi(proxy.RpcProxy):
-    '''
-       Agent side of the Embedded Switch RPC API.
+    """Agent side of the Embedded Switch RPC API.
+
        API version history:
        1.0 - Initial version.
-    '''
+    """
     BASE_RPC_API_VERSION = '1.0'
 
     def __init__(self, topic):
@@ -46,7 +47,8 @@ class AgentNotifierApi(proxy.RpcProxy):
                                        network_id=network_id),
                                        topic=self.topic_network_delete)
 
-    def port_update(self, context, port, physical_network, network_type, vlan_id):
+    def port_update(self, context, port, physical_network,
+                    network_type, vlan_id):
         LOG.debug(_("Sending update port message"))
         self.fanout_cast(context,
                          self.make_msg('port_update',

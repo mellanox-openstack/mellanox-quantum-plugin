@@ -1,5 +1,5 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
-# 
+#
 # Copyright 2013 Mellanox Technologies, Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 import sqlalchemy as sa
 from quantum.db import model_base
 
+
 class SegmentationIdAllocation(model_base.BASEV2):
     """Represents allocation state of segmentation_id on physical network"""
     __tablename__ = 'segmentation_id_allocation'
@@ -35,11 +36,14 @@ class SegmentationIdAllocation(model_base.BASEV2):
 
     def __repr__(self):
         return "<SegmentationIdAllocation(%s,%d,%s)>" % (self.physical_network,
-                                             self.segmentation_id, self.allocated)
+                                                         self.segmentation_id,
+                                                         self.allocated)
 
 
 class NetworkBinding(model_base.BASEV2):
-    """Represents binding of virtual network to physical_network and segmentation_id"""
+    """Represents binding of virtual network to physical_network
+       and segmentation_id
+    """
     __tablename__ = 'network_bindings'
 
     network_id = sa.Column(sa.String(36),
@@ -49,7 +53,7 @@ class NetworkBinding(model_base.BASEV2):
     physical_network = sa.Column(sa.String(64))
     segmentation_id = sa.Column(sa.Integer, nullable=False)
 
-    def __init__(self, network_id, network_type,physical_network, vlan_id):
+    def __init__(self, network_id, network_type, physical_network, vlan_id):
         self.network_id = network_id
         self.network_type = network_type
         self.physical_network = physical_network
@@ -60,6 +64,7 @@ class NetworkBinding(model_base.BASEV2):
                                                self.network_type,
                                                self.physical_network,
                                                self.segmentation_id)
+
 
 class PortProfileBinding(model_base.BASEV2):
     """Represents port profile binding to the port on virtual network """

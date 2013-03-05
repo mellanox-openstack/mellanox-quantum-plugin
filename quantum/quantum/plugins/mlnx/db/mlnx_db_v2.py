@@ -28,31 +28,34 @@ from quantum.plugins.mlnx.db import mlnx_models_v2
 
 LOG = logging.getLogger(__name__)
 
+
 def initialize():
     db.configure_db()
 
 
-def _remove_non_allocatable_vlans(session, allocations, physical_network, vlan_ids):
+def _remove_non_allocatable_vlans(session, allocations,
+                                  physical_network, vlan_ids):
     if physical_network in allocations:
         for entry in allocations[physical_network]:
             try:
                 # see if vlan is allocatable
-                vlan_ids.remove(entry.segmentation_id) 
+                vlan_ids.remove(entry.segmentation_id)
             except KeyError:
                 # it's not allocatable, so check if its allocated
                 if not entry.allocated:
                     # it's not, so remove it from table
                     LOG.debug("removing vlan %s on physical network "
-                        "%s from pool" % 
+                        "%s from pool" %
                         (entry.segmentation_id, physical_network))
                     session.delete(entry)
-       
+
         del allocations[physical_network]
-   
+
 
 def _add_missing_allocatable_vlans(session, physical_network, vlan_ids):
     for vlan_id in sorted(vlan_ids):
-        entry = mlnx_models_v2.SegmentationIdAllocation(physical_network, vlan_id)
+        entry = mlnx_models_v2.SegmentationIdAllocation(physical_network,
+                                                        vlan_id)
         session.add(entry)
 
 
@@ -61,7 +64,7 @@ def _remove_unconfigured_vlans(session, allocations):
         for entry in entries:
             if not entry.allocated:
                 LOG.debug("removing vlan %s on physical network %s"
-                    " from pool" % 
+                    " from pool" %
                     (entry.segmentation_id, entry.physical_network))
                 session.delete(entry)
 
@@ -87,7 +90,7 @@ def sync_network_states(network_vlan_ranges):
             for vlan_range in vlan_ranges:
                 vlan_ids |= set(xrange(vlan_range[0], vlan_range[1] + 1))
             # remove from table unallocated vlans not currently allocatable
-            _remove_non_allocatable_vlans(session, allocations, 
+            _remove_non_allocatable_vlans(session, allocations,
                                           physical_network, vlan_ids)
             # add missing allocatable vlans to table
             _add_missing_allocatable_vlans(session, physical_network, vlan_ids)
@@ -138,12 +141,14 @@ def reserve_specific_network(session, physical_network, segmentation_id):
         except exc.NoResultFound:
             LOG.debug("reserving specific vlan %s on physical network %s "
                       "outside pool" % (segmentation_id, physical_network))
-            entry = mlnx_models_v2.SegmentationIdAllocation(physical_network, segmentation_id)
+            entry = mlnx_models_v2.SegmentationIdAllocation(physical_network,
+                                                            segmentation_id)
             entry.allocated = True
             session.add(entry)
 
 
-def release_network(session, physical_network, segmentation_id, network_vlan_ranges):
+def release_network(session, physical_network,
+                    segmentation_id, network_vlan_ranges):
     with session.begin(subtransactions=True):
         try:
             state = (session.query(mlnx_models_v2.SegmentationIdAllocation).
@@ -153,7 +158,8 @@ def release_network(session, physical_network, segmentation_id, network_vlan_ran
             state.allocated = False
             inside = False
             for vlan_range in network_vlan_ranges.get(physical_network, []):
-                if segmentation_id >= vlan_range[0] and segmentation_id <= vlan_range[1]:
+                if (segmentation_id >= vlan_range[0] and
+                    segmentation_id <= vlan_range[1]):
                     inside = True
                     break
             if inside:
@@ -168,10 +174,11 @@ def release_network(session, physical_network, segmentation_id, network_vlan_ran
                         (segmentation_id, physical_network))
 
 
-def add_network_binding(session, network_id, network_type,physical_network, vlan_id):
+def add_network_binding(session, network_id, network_type,
+                        physical_network, vlan_id):
     with session.begin(subtransactions=True):
-        binding = mlnx_models_v2.NetworkBinding(network_id,network_type,
-                                                     physical_network, vlan_id)
+        binding = mlnx_models_v2.NetworkBinding(network_id, network_type,
+                                                physical_network, vlan_id)
         session.add(binding)
 
 
@@ -184,9 +191,10 @@ def get_network_binding(session, network_id):
     except exc.NoResultFound:
         return
 
+
 def add_port_profile_binding(session, port_id, vnic_type):
     with session.begin(subtransactions=True):
-        binding = mlnx_models_v2.PortProfileBinding(port_id,vnic_type)
+        binding = mlnx_models_v2.PortProfileBinding(port_id, vnic_type)
         session.add(binding)
 
 
@@ -198,6 +206,7 @@ def get_port_profile_binding(session, port_id):
         return binding
     except exc.NoResultFound:
         return
+
 
 def get_port_from_device(device):
     """Get port from database"""
