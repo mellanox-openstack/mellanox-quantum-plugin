@@ -21,27 +21,26 @@ from quantum.plugins.mlnx.common import constants
 
 
 class MlnxPluginV2TestCase(test_plugin.QuantumDbPluginV2TestCase):
-
     _plugin_name = ('quantum.plugins.mlnx.mlnx_plugin.MellanoxEswitchPlugin')
 
     def setUp(self):
         super(MlnxPluginV2TestCase, self).setUp(self._plugin_name)
 
 
-class TestMlnxBasicGet(test_plugin.TestBasicGet,MlnxPluginV2TestCase):
+class TestMlnxBasicGet(test_plugin.TestBasicGet, MlnxPluginV2TestCase):
     pass
 
 
-class TestMlnxV2HTTPResponse(test_plugin.TestV2HTTPResponse,MlnxPluginV2TestCase):
+class TestMlnxV2HTTPResponse(test_plugin.TestV2HTTPResponse,
+                             MlnxPluginV2TestCase):
     pass
 
 
 class TestMlnxPortsV2(test_plugin.TestPortsV2,
                       MlnxPluginV2TestCase):
-
     VIF_TYPE = constants.VIF_TYPE_DIRECT
     HAS_PORT_FILTER = False
-                
+
     def test_port_vif_details(self):
         plugin = QuantumManager.get_plugin()
         with self.port(name='name') as port:
@@ -57,5 +56,6 @@ class TestMlnxPortsV2(test_plugin.TestPortsV2,
             self.assertTrue('status' in non_admin_port)
             self.assertFalse('binding:vif_type' in non_admin_port)
 
-class TestMlnxNetworksV2(test_plugin.TestNetworksV2,MlnxPluginV2TestCase):
+
+class TestMlnxNetworksV2(test_plugin.TestNetworksV2, MlnxPluginV2TestCase):
     pass

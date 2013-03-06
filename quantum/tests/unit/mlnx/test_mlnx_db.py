@@ -115,7 +115,8 @@ class SegmentationIdAllocationTest(unittest2.TestCase):
             physical_network, vlan_id = mlnx_db.reserve_network(self.session)
 
         for vlan_id in vlan_ids:
-            mlnx_db.release_network(self.session, PHYS_NET, vlan_id, VLAN_RANGES)
+            mlnx_db.release_network(self.session, PHYS_NET,
+                                    vlan_id, VLAN_RANGES)
 
     def test_specific_segmentationId_inside_pool(self):
         vlan_id = VLAN_MIN + 5
@@ -152,7 +153,6 @@ class NetworkBindingsTest(test_plugin.QuantumDbPluginV2TestCase):
         mlnx_db.initialize()
         self.session = db.get_session()
 
-
     def tearDown(self):
         db.clear_db()
 
@@ -161,11 +161,16 @@ class NetworkBindingsTest(test_plugin.QuantumDbPluginV2TestCase):
             TEST_NETWORK_ID = network['network']['id']
             self.assertIsNone(mlnx_db.get_network_binding(self.session,
                                                         TEST_NETWORK_ID))
-            mlnx_db.add_network_binding(self.session, TEST_NETWORK_ID,NET_TYPE,PHYS_NET, 1234)
-            binding = mlnx_db.get_network_binding(self.session, TEST_NETWORK_ID)
+            mlnx_db.add_network_binding(self.session,
+                                        TEST_NETWORK_ID,
+                                        NET_TYPE,
+                                        PHYS_NET,
+                                        1234)
+            binding = mlnx_db.get_network_binding(self.session,
+                                                  TEST_NETWORK_ID)
             self.assertIsNotNone(binding)
 
             self.assertEqual(binding.network_id, TEST_NETWORK_ID)
-            self.assertEqual(binding.network_type,NET_TYPE)
+            self.assertEqual(binding.network_type, NET_TYPE)
             self.assertEqual(binding.physical_network, PHYS_NET)
             self.assertEqual(binding.segmentation_id, 1234)
