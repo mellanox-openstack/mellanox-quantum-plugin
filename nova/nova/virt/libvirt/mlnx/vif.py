@@ -19,7 +19,7 @@ import re
 from nova import exception
 from nova.openstack.common import cfg
 from nova.openstack.common import log as logging
-from nova.virt import vif
+from nova.virt.libvirt import vif
 from nova.virt.libvirt.mlnx import conn_utils 
 from nova.virt.libvirt.mlnx import config  as mlxconfig
 
@@ -73,7 +73,8 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
         if vif_type not in SUPPORTED_VIF_TYPES:
             raise exception.NovaException(
                 _("Unexpected vif_type=%s") % vif_type)
-            
+
+        self.vnic_type = vif_type    
         vnic_mac = mapping['mac']
         device_id = instance['uuid']
         try:
