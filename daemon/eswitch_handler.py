@@ -221,15 +221,15 @@ class eSwitchHandler(object):
             
     def _config_vlan_priority_direct(self, pf, vf_index, dev, vlan,priority='0'):
         vf = self.pci_utils.get_eth_vf(dev)
-        self.pci_utils.set_vf_binding(vf)
+        self._config_port_down(dev)
         cmd = ['ip', 'link','set',pf , 'vf', vf_index, 'vlan', vlan, 'qos', priority]
         execute(cmd, root_helper='sudo')
-        self.pci_utils.set_vf_binding(vf,is_bind=True)
         self._config_port_up(dev)
         
     def _config_vlan_priority_hostdev(self, pf, vf_index, dev, vlan,priority='0'):
-        LOG.warning("VST for hostdev is currently not supported")
-        
+        cmd = ['ip', 'link','set',pf , 'vf', vf_index, 'vlan', vlan, 'qos', priority]
+        execute(cmd, root_helper='sudo')
+
     def _config_port_down(self,dev):
         cmd = ['ip', 'link', 'set', dev, 'down']       
         execute(cmd, root_helper='sudo')
