@@ -17,7 +17,7 @@
 
 import re
 from nova import exception
-from nova.openstack.common import cfg
+from oslo.config import cfg
 from nova.openstack.common import log as logging
 from nova.virt.libvirt import vif
 from nova.virt.libvirt.mlnx import conn_utils 
