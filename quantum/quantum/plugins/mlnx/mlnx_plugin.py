@@ -19,32 +19,34 @@ import sys
 
 from oslo.config import cfg
 
+from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum.api.v2 import attributes
 from quantum.common import exceptions as q_exc
 from quantum.common import topics
 from quantum.db import agents_db
 from quantum.db import db_base_plugin_v2
 from quantum.db import l3_db
-# NOTE: quota_db cannot be removed, it is for db model
-from quantum.db import quota_db
+from quantum.db import quota_db  # noqa
+from quantum.db import securitygroups_rpc_base as sg_db_rpc
 from quantum.extensions import portbindings
 from quantum.extensions import providernet as provider
-from quantum.openstack.common import rpc
 from quantum.openstack.common import log as logging
+from quantum.openstack.common import rpc
 from quantum.plugins.mlnx import agent_notify_api
-from quantum.plugins.mlnx.db import mlnx_db_v2 as db
 from quantum.plugins.mlnx.common import constants
+from quantum.plugins.mlnx.db import mlnx_db_v2 as db
 from quantum.plugins.mlnx import rpc_callbacks
 from quantum import policy
-
 
 LOG = logging.getLogger(__name__)
 
 
 class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
-                          l3_db.L3_NAT_db_mixin,
-                          agents_db.AgentDbMixin):
+                            l3_db.L3_NAT_db_mixin,
+                            agents_db.AgentDbMixin,
+                            sg_db_rpc.SecurityGroupServerRpcMixin):
     """Realization of Quantum API on Mellanox HCA embedded switch technology.
+
        Current plugin provides embedded HCA Switch connectivity.
        Code is based on the Linux Bridge plugin content to
        support consistency with L3 & DHCP Agents.
@@ -54,11 +56,17 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
     # bulk operations. Name mangling is used in order to ensure it
     # is qualified by class
     __native_bulk_support = True
-    #  __native_pagination_support = True
-    #  __native_sorting_support = True
 
-    supported_extension_aliases = ["provider", "router", "binding",
-                                   "agent", "quotas"]
+    _supported_extension_aliases = ["provider", "router", "binding",
+                                    "agent", "quotas", "security-group"]
+
+    @property
+    def supported_extension_aliases(self):
+        if not hasattr(self, '_aliases'):
+            aliases = self._supported_extension_aliases[:]
+            sg_rpc.disable_security_group_extension_if_noop_driver(aliases)
+            self._aliases = aliases
+        return self._aliases
 
     network_view = "extension:provider_network:view"
     network_set = "extension:provider_network:set"
@@ -66,12 +74,11 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
     binding_set = "extension:port_binding:set"
 
     def __init__(self):
-        """ Start Mellanox Quantum Plugin."""
+        """Start Mellanox Quantum Plugin."""
         db.initialize()
         self._parse_network_vlan_ranges()
         db.sync_network_states(self.network_vlan_ranges)
         self._set_tenant_network_type()
-        self.agent_rpc = cfg.CONF.AGENT.rpc
         self.vnic_type = cfg.CONF.ESWITCH.vnic_type
         self._setup_rpc()
         LOG.debug(_("Mellanox Embedded Switch Plugin initialisation complete"))
@@ -90,7 +97,7 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
 
     def _parse_network_vlan_ranges(self):
         self.network_vlan_ranges = {}
-        for entry in cfg.CONF.VLANS.network_vlan_ranges:
+        for entry in cfg.CONF.MLNX.network_vlan_ranges:
             if ':' in entry:
                 try:
                     physical_network, vlan_min, vlan_max = entry.split(':')
@@ -136,7 +143,7 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
                 network[provider.SEGMENTATION_ID] = binding.segmentation_id
 
     def _set_tenant_network_type(self):
-        self.tenant_network_type = cfg.CONF.VLANS.tenant_network_type
+        self.tenant_network_type = cfg.CONF.MLNX.tenant_network_type
         if self.tenant_network_type not in [constants.TYPE_VLAN,
                                             constants.TYPE_IB,
                                             constants.TYPE_LOCAL,
@@ -158,7 +165,6 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         if not (network_type_set or physical_network_set or
                 segmentation_id_set):
             return (None, None, None)
-
         # Authorize before exposing plugin details to client
         self._enforce_set_auth(context, attrs, self.network_set)
 
@@ -166,51 +172,67 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
             msg = _("provider:network_type required")
             raise q_exc.InvalidInput(error_message=msg)
         elif network_type == constants.TYPE_FLAT:
-            if segmentation_id_set:
-                msg = _("provider:segmentation_id specified for flat network")
-                raise q_exc.InvalidInput(error_message=msg)
-            else:
-                segmentation_id = constants.FLAT_VLAN_ID
+            self._process_flat_net(segmentation_id_set)
+            segmentation_id = constants.FLAT_VLAN_ID
 
         elif network_type in [constants.TYPE_VLAN, constants.TYPE_IB]:
-            if not segmentation_id_set:
-                msg = _("provider:segmentation_id required")
-                raise q_exc.InvalidInput(error_message=msg)
-            if segmentation_id < 1 or segmentation_id > 4094:
-                msg = _("provider:segmentation_id out of range "
-                        "(1 through 4094)")
-                raise q_exc.InvalidInput(error_message=msg)
+            self._process_vlan_net(segmentation_id, segmentation_id_set)
 
         elif network_type == constants.TYPE_LOCAL:
-            if physical_network_set:
-                msg = _("provider:physical_network specified for local "
-                        "network")
-                raise q_exc.InvalidInput(error_message=msg)
-            else:
-                physical_network = None
-            if segmentation_id_set:
-                msg = _("provider:segmentation_id specified for local "
-                        "network")
-                raise q_exc.InvalidInput(error_message=msg)
-            else:
-                segmentation_id = constants.LOCAL_VLAN_ID
+            self._process_local_net(physical_network_set,
+                                    segmentation_id_set)
+            segmentation_id = constants.LOCAL_VLAN_ID
+            physical_network = None
+
         else:
-            msg = _("provider:network_type %s not supported" % network_type)
+            msg = _("provider:network_type %s not supported") % network_type
+            raise q_exc.InvalidInput(error_message=msg)
+        physical_network = self._process_net_type(network_type,
+                                                  physical_network,
+                                                  physical_network_set)
+        return (network_type, physical_network, segmentation_id)
+
+    def _process_flat_net(self, segmentation_id_set):
+        if segmentation_id_set:
+            msg = _("provider:segmentation_id specified for flat network")
             raise q_exc.InvalidInput(error_message=msg)
 
-        if network_type in [constants.TYPE_VLAN, constants.TYPE_IB,
+    def _process_vlan_net(self, segmentation_id, segmentation_id_set):
+        if not segmentation_id_set:
+            msg = _("provider:segmentation_id required")
+            raise q_exc.InvalidInput(error_message=msg)
+        if segmentation_id < 1 or segmentation_id > 4094:
+            msg = _("provider:segmentation_id out of range "
+                    "(1 through 4094)")
+            raise q_exc.InvalidInput(error_message=msg)
+
+    def _process_local_net(self, physical_network_set, segmentation_id_set):
+        if physical_network_set:
+            msg = _("provider:physical_network specified for local "
+                    "network")
+            raise q_exc.InvalidInput(error_message=msg)
+        if segmentation_id_set:
+            msg = _("provider:segmentation_id specified for local "
+                    "network")
+            raise q_exc.InvalidInput(error_message=msg)
+
+    def _process_net_type(self, network_type,
+                          physical_network,
+                          physical_network_set):
+        if network_type in [constants.TYPE_VLAN,
+                            constants.TYPE_IB,
                             constants.TYPE_FLAT]:
             if physical_network_set:
                 if physical_network not in self.network_vlan_ranges:
-                    msg = _("unknown provider:physical_network %s" %
-                            physical_network)
+                    msg = _("unknown provider:physical_network "
+                            "%s") % physical_network
                     raise q_exc.InvalidInput(error_message=msg)
             elif 'default' in self.network_vlan_ranges:
                 physical_network = 'default'
             else:
                 msg = _("provider:physical_network required")
                 raise q_exc.InvalidInput(error_message=msg)
-        return (network_type, physical_network, segmentation_id)
+        return physical_network
 
     def _check_provider_update(self, context, attrs):
         network_type = attrs.get(provider.NETWORK_TYPE)
@@ -234,22 +256,21 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         binding_profile_set = attributes.is_attr_set(binding_profile)
         if not binding_profile_set:
             return self.vnic_type
-        msg = str()
         if constants.VNIC_TYPE in binding_profile:
             req_vnic_type = binding_profile[constants.VNIC_TYPE]
             if req_vnic_type in (constants.VIF_TYPE_DIRECT,
                                  constants.VIF_TYPE_HOSTDEV):
                 return req_vnic_type
             else:
-                msg = "invalid vnic_type on port_create"
+                msg = _("invalid vnic_type on port_create")
         else:
-            msg = "vnic_type is not defined in port profile"
+            msg = _("vnic_type is not defined in port profile")
         raise q_exc.InvalidInput(error_message=msg)
 
     def create_network(self, context, network):
         (network_type, physical_network,
-           vlan_id) = self._process_provider_create(context,
-                                                    network['network'])
+         vlan_id) = self._process_provider_create(context,
+                                                  network['network'])
         session = context.session
         with session.begin(subtransactions=True):
             if not network_type:
@@ -270,7 +291,7 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
                                                 physical_network,
                                                 vlan_id)
             net = super(MellanoxEswitchPlugin, self).create_network(context,
-                                                                  network)
+                                                                    network)
             db.add_network_binding(session, net['id'],
                                    network_type,
                                    physical_network,
@@ -300,16 +321,15 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         session = context.session
         with session.begin(subtransactions=True):
             binding = db.get_network_binding(session, net_id)
-            result = super(MellanoxEswitchPlugin, self).delete_network(context,
-                                                                       net_id)
+            super(MellanoxEswitchPlugin, self).delete_network(context,
+                                                              net_id)
             if binding.segmentation_id != constants.LOCAL_VLAN_ID:
                 db.release_network(session, binding.physical_network,
                                    binding.segmentation_id,
                                    self.network_vlan_ranges)
             # the network_binding record is deleted via cascade from
             # the network record, so explicit removal is not necessary
-        if self.agent_rpc:
-            self.notifier.network_delete(context, net_id)
+        self.notifier.network_delete(context, net_id)
 
     def get_network(self, context, net_id, fields=None):
         session = context.session
@@ -325,8 +345,8 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         session = context.session
         with session.begin(subtransactions=True):
             nets = super(MellanoxEswitchPlugin, self).get_networks(context,
-                                                                 filters,
-                                                                 None)
+                                                                   filters,
+                                                                   None)
             for net in nets:
                 self._extend_network_dict_provider(context, net)
                 self._extend_network_dict_l3(context, net)
@@ -375,15 +395,13 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
             port = super(MellanoxEswitchPlugin, self).update_port(context,
                                                                   port_id,
                                                                   port)
-        if  self.agent_rpc:
-            if original_port['admin_state_up'] != port['admin_state_up']:
-                binding = db.get_network_binding(context.session,
-                                                 port['network_id'])
-                self.notifier.port_update(context, port,
-                                          binding.physical_network,
-                                          binding.network_type,
-                                          binding.segmentation_id)
-
+        if original_port['admin_state_up'] != port['admin_state_up']:
+            binding = db.get_network_binding(context.session,
+                                             port['network_id'])
+            self.notifier.port_update(context, port,
+                                      binding.physical_network,
+                                      binding.network_type,
+                                      binding.segmentation_id)
         return self._extend_port_dict_binding(context, port)
 
     def delete_port(self, context, port_id, l3_port_check=True):

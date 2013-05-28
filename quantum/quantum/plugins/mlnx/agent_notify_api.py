@@ -45,7 +45,7 @@ class AgentNotifierApi(proxy.RpcProxy):
         self.fanout_cast(context,
                          self.make_msg('network_delete',
                                        network_id=network_id),
-                                       topic=self.topic_network_delete)
+                         topic=self.topic_network_delete)
 
     def port_update(self, context, port, physical_network,
                     network_type, vlan_id):

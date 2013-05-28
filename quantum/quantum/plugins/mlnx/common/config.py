@@ -16,6 +16,7 @@
 # limitations under the License.
 
 from oslo.config import cfg
+
 from quantum.agent.common import config
 from quantum.plugins.mlnx.common import constants
 
@@ -24,30 +25,38 @@ DEFAULT_INTERFACE_MAPPINGS = []
 
 vlan_opts = [
     cfg.StrOpt('tenant_network_type', default='vlan',
-               help="Network type for tenant networks "
-               "(local, ib, vlan, or none)"),
+               help=_("Network type for tenant networks "
+               "(local, ib, vlan, or none)")),
     cfg.ListOpt('network_vlan_ranges',
                 default=DEFAULT_VLAN_RANGES,
-                help="List of <physical_network>:<vlan_min>:<vlan_max> "
-                "or <physical_network>"),
+                help=_("List of <physical_network>:<vlan_min>:<vlan_max> "
+                       "or <physical_network>")),
 ]
 
 
 eswitch_opts = [
     cfg.ListOpt('physical_interface_mappings',
                 default=DEFAULT_INTERFACE_MAPPINGS,
-                help="List of <physical_network>:<physical_interface>"),
+                help=_("List of <physical_network>:<physical_interface>")),
     cfg.StrOpt('vnic_type',
                default=constants.VIF_TYPE_DIRECT,
-               help="type of VM network interface: direct or hosdev"),
+               help=_("type of VM network interface: direct or hosdev")),
+    cfg.StrOpt('daemon_endpoint',
+               default='tcp://127.0.0.1:5001',
+               help=_('eswitch daemon end point')),
+    cfg.IntOpt('request_timeout', default=3000,
+               help=_("The number of milliseconds the agent will wait for "
+                      "response on request to daemon.")),
 ]
 
 agent_opts = [
-    cfg.IntOpt('polling_interval', default=2),
-    cfg.BoolOpt('rpc', default=True),
+    cfg.IntOpt('polling_interval', default=2,
+               help=_("The number of seconds the agent will wait between "
+                      "polling for local device changes.")),
 ]
 
-cfg.CONF.register_opts(vlan_opts, "VLANS")
+
+cfg.CONF.register_opts(vlan_opts, "MLNX")
 cfg.CONF.register_opts(eswitch_opts, "ESWITCH")
 cfg.CONF.register_opts(agent_opts, "AGENT")
 config.register_agent_state_opts_helper(cfg.CONF)

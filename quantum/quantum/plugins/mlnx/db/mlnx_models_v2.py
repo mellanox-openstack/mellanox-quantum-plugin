@@ -16,18 +16,19 @@
 # limitations under the License.
 
 import sqlalchemy as sa
+
 from quantum.db import model_base
 
 
 class SegmentationIdAllocation(model_base.BASEV2):
-    """Represents allocation state of segmentation_id on physical network"""
+    """Represents allocation state of segmentation_id on physical network."""
     __tablename__ = 'segmentation_id_allocation'
 
     physical_network = sa.Column(sa.String(64), nullable=False,
                                  primary_key=True)
     segmentation_id = sa.Column(sa.Integer, nullable=False, primary_key=True,
-                        autoincrement=False)
-    allocated = sa.Column(sa.Boolean, nullable=False)
+                                autoincrement=False)
+    allocated = sa.Column(sa.Boolean, nullable=False, default=False)
 
     def __init__(self, physical_network, segmentation_id):
         self.physical_network = physical_network
@@ -41,10 +42,11 @@ class SegmentationIdAllocation(model_base.BASEV2):
 
 
 class NetworkBinding(model_base.BASEV2):
-    """Represents binding of virtual network to physical_network
-       and segmentation_id
+    """Represents binding of virtual network.
+
+    Binds network to physical_network and segmentation_id
     """
-    __tablename__ = 'network_bindings'
+    __tablename__ = 'mlnx_network_bindings'
 
     network_id = sa.Column(sa.String(36),
                            sa.ForeignKey('networks.id', ondelete="CASCADE"),
@@ -61,18 +63,18 @@ class NetworkBinding(model_base.BASEV2):
 
     def __repr__(self):
         return "<NetworkBinding(%s,%s,%s,%d)>" % (self.network_id,
-                                               self.network_type,
-                                               self.physical_network,
-                                               self.segmentation_id)
+                                                  self.network_type,
+                                                  self.physical_network,
+                                                  self.segmentation_id)
 
 
 class PortProfileBinding(model_base.BASEV2):
-    """Represents port profile binding to the port on virtual network """
+    """Represents port profile binding to the port on virtual network."""
     __tablename__ = 'port_profile'
 
     port_id = sa.Column(sa.String(36),
-                           sa.ForeignKey('ports.id', ondelete="CASCADE"),
-                           primary_key=True)
+                        sa.ForeignKey('ports.id', ondelete="CASCADE"),
+                        primary_key=True)
     vnic_type = sa.Column(sa.String(32), nullable=False)
 
     def __init__(self, port_id, vnic_type):
@@ -81,4 +83,4 @@ class PortProfileBinding(model_base.BASEV2):
 
     def __repr__(self):
         return "<PortProfileBinding(%s,%s,%s,%d)>" % (self.port_id,
-                                               self.vnic_type)
+                                                      self.vnic_type)

@@ -14,12 +14,9 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from quantum.common import exceptions as qexc
 
 
-class MlxException(qexc.QuantumException):
-    def __init__(self, message=None):
-        self.message = message
-
-    def __str__(self):
-        return 'MlxException: %s' % self.message
+class MlnxException(qexc.QuantumException):
+    message = _("Mlnx Exception: %(err_msg)s")
