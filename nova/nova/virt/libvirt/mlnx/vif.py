@@ -17,6 +17,7 @@
 
 import re
 from nova import exception
+#from nova.openstack.common import cfg
 from oslo.config import cfg
 from nova.openstack.common import log as logging
 from nova.virt.libvirt import vif
@@ -79,8 +80,14 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
         device_id = instance['uuid']
         try:
             dev = self.conn_util.allocate_nic(vnic_mac, device_id, self.fabric, vif_type)
-        except Exception:
-             raise exception.NovaException(_("Processing Failure during  vNIC allocation"))
+            if vif_type == VIF_TYPE_HOSTDEV:
+                dev_name = None
+                LOG.debug("vnic_mac=%s,device_id=%s,fabric=%s,vif_type=%s,devname=%s" % (vnic_mac, device_id, self.fabric, vif_type, dev_name))
+                dev = self.conn_util.allocate_nic(vnic_mac, device_id, self.fabric, vif_type, dev_name)
+            else:
+                dev = mapping['vif_devname'].replace('tap','eth') 
+        except Exception,e:
+             raise exception.NovaException(_("Processing Failure during  vNIC allocation:%s"),e)
         #Allocation Failed
         if dev is None:
             raise exception.NovaException(_("Failed to allocate device for vNIC"))
@@ -91,8 +98,14 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
         network, mapping = vif
         vnic_mac = mapping['mac']
         device_id = instance['uuid']
+        dev_name = None
+        vif_type = mapping.get('vif_type')
+
         try:
-            dev = self.conn_util.plug_nic(vnic_mac, device_id, self.fabric) 
+            if vif_type == VIF_TYPE_DIRECT:
+                dev_name = mapping['vif_devname'].replace('tap','eth') 
+            dev = self.conn_util.plug_nic(vnic_mac, device_id, self.fabric, vif_type, dev_name) 
+ 
         except Exception:
             raise exception.NovaException(_("Processing Failure during vNIC plug"))
         if dev is None:
