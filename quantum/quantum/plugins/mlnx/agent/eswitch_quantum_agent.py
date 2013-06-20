@@ -262,10 +262,10 @@ class MlnxEswitchQuantumAgent(object):
     def process_network_ports(self, port_info):
         resync_a = False
         resync_b = False
-        if 'added' in port_info:
+        if port_info.get('added'):
             LOG.debug(_("ports added!"))
             resync_a = self.treat_devices_added(port_info['added'])
-        if 'removed' in port_info:
+        if port_info.get('removed'):
             LOG.debug(_("ports removed!"))
             resync_b = self.treat_devices_removed(port_info['removed'])
         # If one of the above opertaions fails => resync with plugin
@@ -334,9 +334,9 @@ class MlnxEswitchQuantumAgent(object):
                 continue
             if dev_details['exists']:
                 LOG.info(_("Port %s updated."), device)
-                self.eswitch.port_release(device)
             else:
                 LOG.debug(_("Device %s not defined on plugin"), device)
+            self.eswitch.port_release(device)
         return resync
 
     def daemon_loop(self):
@@ -356,7 +356,7 @@ class MlnxEswitchQuantumAgent(object):
                 port_info = self.update_ports(ports)
                 # notify plugin about port deltas
                 if port_info:
-                    LOG.debug(_("Agent loop has new devices!"))
+                    LOG.debug(_("Agent loop process devices!"))
                     # If treat devices fails - must resync with plugin
                     sync = self.process_network_ports(port_info)
                     ports = port_info['current']
