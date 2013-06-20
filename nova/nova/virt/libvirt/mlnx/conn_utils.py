@@ -69,21 +69,25 @@ class ConnUtil(object):
         LOG.error(_(error_msg))
         raise exceptions.MlxException(error_msg)
 
-    def allocate_nic(self, vnic_mac, device_id, fabric, vnic_type):
+    def allocate_nic(self, vnic_mac, device_id, fabric, vnic_type, dev_name):
         msg = json.dumps({'action':'create_port',
                           'vnic_mac':vnic_mac,
                           'device_id':device_id, 
                           'fabric':fabric, 
-                          'vnic_type':vnic_type})
+                          'vnic_type':vnic_type,
+                          'dev_name':dev_name})
         recv_msg = self.send_msg(msg)
         dev = recv_msg['dev']
         return dev
     
-    def plug_nic(self, vnic_mac, device_id, fabric):
+    def plug_nic(self, vnic_mac, device_id, fabric, vif_type, dev_name):
         msg = json.dumps({'action':'plug_nic', 
                           'vnic_mac':vnic_mac,
                           'device_id':device_id, 
-                          'fabric':fabric})
+                          'fabric':fabric, 
+                          'vnic_type':vif_type,
+                          'dev_name':dev_name})
+        
         recv_msg = self.send_msg(msg)
         dev = recv_msg['dev']
         return dev
