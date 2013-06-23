@@ -79,7 +79,6 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
         vnic_mac = mapping['mac']
         device_id = instance['uuid']
         try:
-            dev = self.conn_util.allocate_nic(vnic_mac, device_id, self.fabric, vif_type)
             if vif_type == VIF_TYPE_HOSTDEV:
                 dev_name = None
                 LOG.debug("vnic_mac=%s,device_id=%s,fabric=%s,vif_type=%s,devname=%s" % (vnic_mac, device_id, self.fabric, vif_type, dev_name))
