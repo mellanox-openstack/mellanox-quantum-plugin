@@ -84,7 +84,10 @@ class MlnxRpcCallbacks(dhcp_rpc_base.DhcpRpcCallbackMixin,
                      'port_id': port['id'],
                      'admin_state_up': port['admin_state_up']}
             # Set the port status to UP
-            db.set_port_status(port['id'], q_const.PORT_STATUS_ACTIVE)
+            new_status = (q_const.PORT_STATUS_ACTIVE if port['admin_state_up']
+                          else q_const.PORT_STATUS_DOWN)
+            if port['status'] != new_status:
+                db.set_port_status(port['id'], new_status)
         else:
             entry = {'device': device}
             LOG.debug("%s can not be found in database", device)

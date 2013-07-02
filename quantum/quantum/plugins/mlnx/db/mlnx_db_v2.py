@@ -20,6 +20,8 @@ from sqlalchemy.orm import exc
 from quantum.common import exceptions as q_exc
 import quantum.db.api as db
 from quantum.db import models_v2
+from quantum.db import securitygroups_db as sg_db
+from quantum import manager
 from quantum.openstack.common import log as logging
 from quantum.plugins.mlnx.common import config  # noqa
 from quantum.plugins.mlnx.db import mlnx_models_v2
@@ -164,8 +166,8 @@ def release_network(session, physical_network,
             state.allocated = False
             inside = False
             for vlan_range in network_vlan_ranges.get(physical_network, []):
-                if (segmentation_id >= vlan_range[0] and
-                    segmentation_id <= vlan_range[1]):
+                if ((segmentation_id >= vlan_range[0])
+                   and (segmentation_id <= vlan_range[1])):
                     inside = True
                     break
             if inside:
@@ -214,10 +216,28 @@ def get_port_from_device(device):
     """Get port from database."""
     LOG.debug(_("get_port_from_device() called"))
     session = db.get_session()
-    ports = session.query(models_v2.Port).all()
-    for port in ports:
-        if port['id'].startswith(device):
-            return port
+    sg_binding_port = sg_db.SecurityGroupPortBinding.port_id
+
+    query = session.query(models_v2.Port,
+                          sg_db.SecurityGroupPortBinding.security_group_id)
+    query = query.outerjoin(sg_db.SecurityGroupPortBinding,
+                            models_v2.Port.id == sg_binding_port)
+    query = query.filter(models_v2.Port.id.startswith(device))
+    port_and_sgs = query.all()
+    if not port_and_sgs:
+        return
+    port = port_and_sgs[0][0]
+    plugin = manager.QuantumManager.get_plugin()
+    port_dict = plugin._make_port_dict(port)
+    port_dict['security_groups'] = []
+    for port_in_db, sg_id in port_and_sgs:
+        if sg_id:
+            port_dict['security_groups'].append(sg_id)
+    port_dict['security_group_rules'] = []
+    port_dict['security_group_source_groups'] = []
+    port_dict['fixed_ips'] = [ip['ip_address']
+                              for ip in port['fixed_ips']]
+    return port_dict
 
 
 def get_port_from_device_mac(device_mac):

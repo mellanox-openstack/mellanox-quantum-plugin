@@ -20,18 +20,29 @@ import sys
 from oslo.config import cfg
 
 from quantum.agent import securitygroups_rpc as sg_rpc
+from quantum.api.rpc.agentnotifiers import dhcp_rpc_agent_api
+from quantum.api.rpc.agentnotifiers import l3_rpc_agent_api
 from quantum.api.v2 import attributes
+from quantum.common import constants as q_const
 from quantum.common import exceptions as q_exc
 from quantum.common import topics
 from quantum.db import agents_db
+from quantum.db import agentschedulers_db
+from quantum.db import api as db_api
 from quantum.db import db_base_plugin_v2
-from quantum.db import l3_db
-from quantum.db import quota_db  # noqa
+from quantum.db import dhcp_rpc_base
+from quantum.db import extraroute_db
+from quantum.db import l3_rpc_base
+# NOTE: quota_db cannot be removed, it is for db model
+from quantum.db import quota_db   # noqa
 from quantum.db import securitygroups_rpc_base as sg_db_rpc
 from quantum.extensions import portbindings
 from quantum.extensions import providernet as provider
+from quantum.extensions import securitygroup as ext_sg
+from quantum.openstack.common import importutils
 from quantum.openstack.common import log as logging
 from quantum.openstack.common import rpc
+from quantum.openstack.common.rpc import proxy
 from quantum.plugins.mlnx import agent_notify_api
 from quantum.plugins.mlnx.common import constants
 from quantum.plugins.mlnx.db import mlnx_db_v2 as db
@@ -42,9 +53,9 @@ LOG = logging.getLogger(__name__)
 
 
 class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
-                            l3_db.L3_NAT_db_mixin,
-                            agents_db.AgentDbMixin,
-                            sg_db_rpc.SecurityGroupServerRpcMixin):
+                            extraroute_db.ExtraRoute_db_mixin,
+                            sg_db_rpc.SecurityGroupServerRpcMixin,
+                            agentschedulers_db.AgentSchedulerDbMixin):
     """Realization of Quantum API on Mellanox HCA embedded switch technology.
 
        Current plugin provides embedded HCA Switch connectivity.
@@ -58,7 +69,8 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
     __native_bulk_support = True
 
     _supported_extension_aliases = ["provider", "router", "binding",
-                                    "agent", "quotas", "security-group"]
+                                    "agent", "quotas", "security-group",
+                                    "extraroute", "agent_scheduler"]
 
     @property
     def supported_extension_aliases(self):
@@ -80,7 +92,19 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         db.sync_network_states(self.network_vlan_ranges)
         self._set_tenant_network_type()
         self.vnic_type = cfg.CONF.ESWITCH.vnic_type
+        if not self._check_port_binding_for_net_type(self.vnic_type,
+                                                     self.tenant_network_type):
+            LOG.error(_("Invalid defaults: tenant vnic type: "
+                        "'%(vnic_type)s - for network_type %(net_type)s. "
+                        "Service terminated!"),
+                      {"vnic_type": self.vnic_type,
+                      "net_type": self.tenant_network_type})
+            sys.exit(1)
         self._setup_rpc()
+        self.network_scheduler = importutils.import_object(
+            cfg.CONF.network_scheduler_driver)
+        self.router_scheduler = importutils.import_object(
+            cfg.CONF.router_scheduler_driver)
         LOG.debug(_("Mellanox Embedded Switch Plugin initialisation complete"))
 
     def _setup_rpc(self):
@@ -94,6 +118,8 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
                                   fanout=False)
         # Consume from all consumers in a thread
         self.conn.consume_in_thread()
+        self.dhcp_agent_notifier = dhcp_rpc_agent_api.DhcpAgentNotifyAPI()
+        self.l3_agent_notifier = l3_rpc_agent_api.L3AgentNotify
 
     def _parse_network_vlan_ranges(self):
         self.network_vlan_ranges = {}
@@ -251,16 +277,35 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         msg = _("Plugin does not support updating provider attributes")
         raise q_exc.InvalidInput(error_message=msg)
 
+    def _check_port_binding_for_net_type(self, vnic_type, net_type):
+        if net_type == constants.TYPE_VLAN:
+            if vnic_type in (constants.VIF_TYPE_DIRECT,
+                             constants.VIF_TYPE_HOSTDEV):
+                return True
+        elif net_type == constants.TYPE_IB:
+            if vnic_type in (portbindings.VIF_TYPE_BRIDGE,
+                             constants.VIF_TYPE_HOSTDEV):
+                return True
+        return False
+
     def _process_port_binding_create(self, context, attrs):
         binding_profile = attrs.get(portbindings.PROFILE)
         binding_profile_set = attributes.is_attr_set(binding_profile)
+
+        net_binding = db.get_network_binding(context.session,
+                                             attrs.get('network_id'))
+        net_type = net_binding.network_type
+
         if not binding_profile_set:
             return self.vnic_type
         if constants.VNIC_TYPE in binding_profile:
             req_vnic_type = binding_profile[constants.VNIC_TYPE]
             if req_vnic_type in (constants.VIF_TYPE_DIRECT,
-                                 constants.VIF_TYPE_HOSTDEV):
-                return req_vnic_type
+                                 constants.VIF_TYPE_HOSTDEV,
+                                 portbindings.VIF_TYPE_BRIDGE):
+                if self._check_port_binding_for_net_type(req_vnic_type,
+                                                         net_type):
+                    return req_vnic_type
             else:
                 msg = _("invalid vnic_type on port_create")
         else:
@@ -371,38 +416,72 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
 
     def create_port(self, context, port):
         LOG.debug(_("create_port with %s"), port)
-        vnic_type = self._process_port_binding_create(context, port['port'])
-        port = super(MellanoxEswitchPlugin, self).create_port(context, port)
-        db.add_port_profile_binding(context.session, port['id'], vnic_type)
+        session = context.session
+        with session.begin(subtransactions=True):
+            self._ensure_default_security_group_on_port(context, port)
+            sgids = self._get_security_groups_on_port(context, port)
+            # Set port status as 'DOWN'. This will be updated by agent
+            port['port']['status'] = q_const.PORT_STATUS_DOWN
+            vnic_type = self._process_port_binding_create(context,
+                                                          port['port'])
+            port = super(MellanoxEswitchPlugin,
+                         self).create_port(context, port)
+            db.add_port_profile_binding(context.session, port['id'], vnic_type)
+            self._process_port_create_security_group(
+                context, port['id'], sgids)
+            self._extend_port_dict_security_group(context, port)
+        self.notify_security_groups_member_updated(context, port)
         return self._extend_port_dict_binding(context, port)
 
     def get_port(self, context, id, fields=None):
-        port = super(MellanoxEswitchPlugin, self).get_port(context, id, fields)
-        return self._fields(self._extend_port_dict_binding(context, port),
-                            fields)
+        with context.session.begin(subtransactions=True):
+            port = super(MellanoxEswitchPlugin, self).get_port(context,
+                                                               id,
+                                                               fields)
+            self._extend_port_dict_security_group(context, port)
+        self._extend_port_dict_binding(context, port),
+        return self._fields(port, fields)
 
-    def get_ports(self, context, filters=None, fields=None):
-        ports = super(MellanoxEswitchPlugin, self).get_ports(
-            context, filters, fields)
-        return [self._fields(self._extend_port_dict_binding(context, port),
-                             fields) for port in ports]
+    def get_ports(self, context, filters=None, fields=None,
+                  sorts=None, limit=None, marker=None, page_reverse=False):
+        res_ports = []
+        with context.session.begin(subtransactions=True):
+            ports = super(MellanoxEswitchPlugin,
+                          self).get_ports(context, filters, fields, sorts,
+                                          limit, marker, page_reverse)
+            #TODO(nati) filter by security group
+            for port in ports:
+                self._extend_port_dict_security_group(context, port)
+                self._extend_port_dict_binding(context, port)
+                res_ports.append(self._fields(port, fields))
+        return res_ports
 
     def update_port(self, context, port_id, port):
-        original_port = super(MellanoxEswitchPlugin, self).get_port(context,
-                                                                    port_id)
+        original_port = self.get_port(context, port_id)
         session = context.session
+        need_port_update_notify = False
+
         with session.begin(subtransactions=True):
-            port = super(MellanoxEswitchPlugin, self).update_port(context,
-                                                                  port_id,
-                                                                  port)
-        if original_port['admin_state_up'] != port['admin_state_up']:
+            new_port = super(MellanoxEswitchPlugin, self).update_port(context,
+                                                                      port_id,
+                                                                      port)
+            need_port_update_notify = self.update_security_group_on_port(
+                context, port_id, port, original_port, new_port)
+
+        need_port_update_notify |= self.is_security_group_member_updated(
+            context, original_port, new_port)
+
+        if original_port['admin_state_up'] != new_port['admin_state_up']:
+            need_port_update_notify = True
+
+        if need_port_update_notify:
             binding = db.get_network_binding(context.session,
-                                             port['network_id'])
-            self.notifier.port_update(context, port,
+                                             new_port['network_id'])
+            self.notifier.port_update(context, new_port,
                                       binding.physical_network,
                                       binding.network_type,
                                       binding.segmentation_id)
-        return self._extend_port_dict_binding(context, port)
+        return self._extend_port_dict_binding(context, new_port)
 
     def delete_port(self, context, port_id, l3_port_check=True):
         # if needed, check to see if this is a port owned by
@@ -413,6 +492,7 @@ class MellanoxEswitchPlugin(db_base_plugin_v2.QuantumDbPluginV2,
         session = context.session
         with session.begin(subtransactions=True):
             self.disassociate_floatingips(context, port_id)
-
+            port = self.get_port(context, port_id)
+            self._delete_port_security_group_bindings(context, port_id)
             return super(MellanoxEswitchPlugin, self).delete_port(context,
                                                                   port_id)

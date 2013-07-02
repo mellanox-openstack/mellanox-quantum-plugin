@@ -24,6 +24,7 @@ import eventlet
 from oslo.config import cfg
 
 from quantum.agent import rpc as agent_rpc
+from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum.common import config as logging_config
 from quantum.common import constants as q_constants
 from quantum.common import topics
@@ -100,7 +101,8 @@ class EswitchManager(object):
         net_map = self.network_map[network_id]
         net_map['ports'].append({'port_id': port_id, 'port_mac': port_mac})
 
-        if network_type == constants.TYPE_VLAN:
+        if network_type in (constants.TYPE_VLAN,
+                            constants.TYPE_IB):
             LOG.info(_('Binding VLAN ID %(seg_id)s'
                        'to eSwitch for vNIC mac_address %(mac)s'),
                      {'seg_id': seg_id,
@@ -109,8 +111,6 @@ class EswitchManager(object):
                                         seg_id,
                                         port_mac)
             self.utils.port_up(physical_network, port_mac)
-        elif network_type == constants.TYPE_IB:
-            LOG.debug(_('Network Type IB currently not supported'))
         else:
             LOG.error(_('Unsupported network type %s'), network_type)
 
@@ -146,14 +146,17 @@ class EswitchManager(object):
         self.network_map[network_id] = data
 
 
-class MlnxEswitchRpcCallbacks():
+class MlnxEswitchRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
 
     # Set RPC API version to 1.0 by default.
-    RPC_API_VERSION = '1.0'
+    # history
+    #   1.1 Support Security Group RPC
+    RPC_API_VERSION = '1.1'
 
     def __init__(self, context, eswitch):
         self.context = context
         self.eswitch = eswitch
+        self.sg_agent = eswitch
 
     def network_delete(self, context, **kwargs):
         LOG.debug(_("network_delete received"))
@@ -172,6 +175,9 @@ class MlnxEswitchRpcCallbacks():
         net_type = kwargs.get('network_type')
         net_id = port['network_id']
         if self.eswitch.vnic_port_exists(port['mac_address']):
+            if 'security_groups' in port:
+                self.sg_agent.refresh_firewall()
+
             if port['admin_state_up']:
                 self.eswitch.port_up(net_id,
                                      net_type,
@@ -196,7 +202,12 @@ class MlnxEswitchRpcCallbacks():
         return dispatcher.RpcDispatcher([self])
 
 
-class MlnxEswitchQuantumAgent(object):
+class MlnxEswitchPluginApi(agent_rpc.PluginApi,
+                           sg_rpc.SecurityGroupServerRpcApiMixin):
+    pass
+
+
+class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
     # Set RPC API version to 1.0 by default.
     RPC_API_VERSION = '1.0'
 
@@ -229,8 +240,10 @@ class MlnxEswitchQuantumAgent(object):
 
     def _setup_rpc(self):
         self.agent_id = 'mlnx-agent.%s' % socket.gethostname()
+        LOG.info(_("RPC agent_id: %s"), self.agent_id)
+
         self.topic = topics.AGENT
-        self.plugin_rpc = agent_rpc.PluginApi(topics.PLUGIN)
+        self.plugin_rpc = MlnxEswitchPluginApi(topics.PLUGIN)
         self.state_rpc = agent_rpc.PluginReportStateAPI(topics.PLUGIN)
         # RPC network init
         self.context = context.get_admin_context_without_session()
@@ -239,7 +252,8 @@ class MlnxEswitchQuantumAgent(object):
         self.dispatcher = self.callbacks.create_rpc_dispatcher()
         # Define the listening consumers for the agent
         consumers = [[topics.PORT, topics.UPDATE],
-                     [topics.NETWORK, topics.DELETE]]
+                     [topics.NETWORK, topics.DELETE],
+                     [topics.SECURITY_GROUP, topics.UPDATE]]
         self.connection = agent_rpc.create_consumers(self.dispatcher,
                                                      self.topic,
                                                      consumers)

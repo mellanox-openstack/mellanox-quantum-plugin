@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from quantum.agent import securitygroups_rpc as sg_rpc
 from quantum.common import topics
 from quantum.openstack.common import log as logging
 from quantum.openstack.common.rpc import proxy
@@ -22,7 +23,8 @@ from quantum.openstack.common.rpc import proxy
 LOG = logging.getLogger(__name__)
 
 
-class AgentNotifierApi(proxy.RpcProxy):
+class AgentNotifierApi(proxy.RpcProxy,
+                       sg_rpc.SecurityGroupAgentRpcApiMixin):
     """Agent side of the Embedded Switch RPC API.
 
        API version history:
