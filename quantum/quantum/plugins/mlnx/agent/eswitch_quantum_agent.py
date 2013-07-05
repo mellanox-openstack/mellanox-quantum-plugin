@@ -279,7 +279,7 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
         if port_info.get('added'):
             LOG.debug(_("ports added!"))
             resync_a = self.treat_devices_added(port_info['added'])
-        if port_info.('removed'):
+        if port_info.get('removed'):
             LOG.debug(_("ports removed!"))
             resync_b = self.treat_devices_removed(port_info['removed'])
         # If one of the above opertaions fails => resync with plugin
