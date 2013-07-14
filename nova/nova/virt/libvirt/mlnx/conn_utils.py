@@ -21,7 +21,7 @@ from nova.openstack.common import log as logging
 from nova.virt.libvirt.mlnx import exceptions
 
 MLX_DAEMON = "tcp://127.0.0.1:5001"
-REQUEST_TIMEOUT = 1000
+REQUEST_TIMEOUT = 4000
 LOG = logging.getLogger(__name__)
 
 class ConnUtil(object):
