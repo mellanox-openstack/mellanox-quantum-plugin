@@ -49,6 +49,7 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
     def __init__(self,get_connection):
         super(MlxEthVIFDriver, self).__init__(get_connection)
         self.fabric =  CONF.fabric
+        self.libvirt_gen_drv = vif.LibvirtGenericVIFDriver(get_connection)
 
     def get_dev_config(self, mac_address, dev):
         conf = None
@@ -118,7 +119,7 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
                     raise exception.NovaException(_(error_msg))
 
         except Exception as e:
-            LOG.debug("Error in Plug: %s", e) 
+            LOG.debug(_("Error in Plug: %s"), e) 
             raise exception.NovaException(_("Processing Failure during vNIC plug"))
  
     def unplug(self, instance, vif):
