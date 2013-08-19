@@ -62,7 +62,7 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
             self._set_source_address(conf , dev)
         return conf
     
-    def get_config(self, instance, network, mapping, image_meta):
+    def get_config(self, instance, network, mapping, image_meta, inst_type=None):
         vif_type = mapping.get('vif_type')
         LOG.debug(_("vif_type=%(vif_type)s instance=%(instance)s "
                     "network=%(network)s mapping=%(mapping)s")
