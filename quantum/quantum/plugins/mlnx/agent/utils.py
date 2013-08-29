@@ -55,7 +55,7 @@ class EswitchUtils(object):
             self._conn.close()
             self.poller.unregister(self._conn)
             self.__conn = None
-            raise exceptions.MlnxException(_("eSwitchD: Request timeout"))
+            raise exception.MlnxException(err_msg="eSwitchD: Request timeout")
 
     def parse_response_msg(self, recv_msg):
         msg = jsonutils.loads(recv_msg)

@@ -54,9 +54,9 @@ class EswitchManager(object):
                 if port['port_mac'] == port_mac:
                     return port['port_id']
         err_msg = _("Agent cache inconsistency - port id "
-                    "is not stored for %s") % port_mac
+                    "is not stored for %s"),  port_mac
         LOG.error(err_msg)
-        raise exceptions.MlnxException(err_msg)
+        raise exceptions.MlnxException(err_msg = err_msg)
 
     def get_vnics_mac(self):
         return set(self.utils.get_attached_vnics().keys())
@@ -153,10 +153,10 @@ class MlnxEswitchRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
     #   1.1 Support Security Group RPC
     RPC_API_VERSION = '1.1'
 
-    def __init__(self, context, eswitch):
+    def __init__(self, context, agent):
         self.context = context
-        self.eswitch = eswitch
-        self.sg_agent = eswitch
+        self.eswitch = agent.eswitch
+        self.sg_agent = agent
 
     def network_delete(self, context, **kwargs):
         LOG.debug(_("network_delete received"))
@@ -222,6 +222,7 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
             'agent_type': 'eSwitch agent',
             'start_flag': True}
         self._setup_rpc()
+        self.init_firewall()
 
     def _setup_eswitches(self, interface_mapping):
         daemon = cfg.CONF.ESWITCH.daemon_endpoint
@@ -248,7 +249,7 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
         # RPC network init
         self.context = context.get_admin_context_without_session()
         # Handle updates from service
-        self.callbacks = MlnxEswitchRpcCallbacks(self.context, self.eswitch)
+        self.callbacks = MlnxEswitchRpcCallbacks(self.context, self)
         self.dispatcher = self.callbacks.create_rpc_dispatcher()
         # Define the listening consumers for the agent
         consumers = [[topics.PORT, topics.UPDATE],
