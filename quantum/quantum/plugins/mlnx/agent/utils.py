@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import zmq
+import time
 
 from quantum.openstack.common import jsonutils
 from quantum.openstack.common import log as logging
@@ -23,7 +24,25 @@ from quantum.plugins.mlnx.common import exceptions
 
 LOG = logging.getLogger(__name__)
 
-
+def timeout_decorator(func):
+    interval = 3
+    num_of_retries = 3
+    LOG.debug(_("Timeout decorating %s"),func)
+    def decorated(*args, **kwargs):
+        exc = None
+        for i in range(num_of_retries):
+            try:
+                #print("Now calling %s with %s,%s" % (func.__name__, args, kwargs))
+                return func(*args, **kwargs)
+            except Exception,e:
+                LOG.debug(_("Got request timeout - going to call again after "
+                            "sleeping %s"),(interval*(i+1)))
+                time.sleep(interval*(i+1))
+                exc = e
+        LOG.debug(_("Raising exception"))
+        raise exc
+    return decorated
+    
 class EswitchUtils(object):
     def __init__(self, daemon_endpoint, timeout):
         self.__conn = None
@@ -42,6 +61,7 @@ class EswitchUtils(object):
             self.poller.register(self._conn, zmq.POLLIN)
         return self.__conn
 
+    @timeout_decorator
     def send_msg(self, msg):
         self._conn.send(msg)
 
@@ -55,7 +75,7 @@ class EswitchUtils(object):
             self._conn.close()
             self.poller.unregister(self._conn)
             self.__conn = None
-            raise exception.MlnxException(err_msg="eSwitchD: Request timeout")
+            raise exceptions.RequestTimeout()
 
     def parse_response_msg(self, recv_msg):
         msg = jsonutils.loads(recv_msg)
@@ -69,7 +89,7 @@ class EswitchUtils(object):
         else:
             error_msg = _("Unknown operation status %s") % msg['status']
         LOG.error(error_msg)
-        raise exceptions.MlnxException(error_msg)
+        raise exceptions.RequestTimeout()
 
     def get_attached_vnics(self):
         LOG.debug(_("get_attached_vnics"))

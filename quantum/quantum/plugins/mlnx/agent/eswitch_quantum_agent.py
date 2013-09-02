@@ -54,9 +54,9 @@ class EswitchManager(object):
                 if port['port_mac'] == port_mac:
                     return port['port_id']
         err_msg = _("Agent cache inconsistency - port id "
-                    "is not stored for %s"),  port_mac
+                    "is not stored for %s"), port_mac
         LOG.error(err_msg)
-        raise exceptions.MlnxException(err_msg = err_msg)
+        raise exceptions.MlnxException(err_msg=err_msg)
 
     def get_vnics_mac(self):
         return set(self.utils.get_attached_vnics().keys())
@@ -131,7 +131,7 @@ class EswitchManager(object):
         if network_type == constants.TYPE_VLAN:
             LOG.debug(_("creating VLAN Network"))
         elif network_type == constants.TYPE_IB:
-            LOG.debug(_("currently IB network provisioning is not supported"))
+            LOG.debug(_("creating IB Network"))
         else:
             LOG.error(_("Unknown network type %(network_type) "
                         "for network %(network_id)"),
@@ -375,6 +375,10 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
                     # If treat devices fails - must resync with plugin
                     sync = self.process_network_ports(port_info)
                     ports = port_info['current']
+            except exceptions.RequestTimeout:
+                LOG.exception(_("Request timeout in agent event loop "
+                                "eSwitchD is not responding - exiting..."))
+                sys.exit(1)
             except Exception:
                 LOG.exception(_("Error in agent event loop"))
                 sync = True
@@ -406,12 +410,12 @@ def main():
     try:
         agent = MlnxEswitchQuantumAgent(interface_mappings)
     except Exception as e:
-        LOG.error(_("Failed on Agent initialisation : %s."
+        LOG.error(_("Failed on Agent initialization : %s."
                     " Agent terminated!"), e)
         sys.exit(1)
 
     # Start everything.
-    LOG.info(_("Agent initialised successfully, now running... "))
+    LOG.info(_("Agent initialized successfully, now running... "))
     agent.daemon_loop()
     sys.exit(0)
 
