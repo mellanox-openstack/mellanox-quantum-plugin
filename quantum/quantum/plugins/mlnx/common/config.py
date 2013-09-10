@@ -43,11 +43,14 @@ eswitch_opts = [
                default=constants.VIF_TYPE_DIRECT,
                help=_("type of VM network interface: direct or hosdev")),
     cfg.StrOpt('daemon_endpoint',
-               default='tcp://127.0.0.1:5001',
+               default='tcp://127.0.0.1:60001',
                help=_('eswitch daemon end point')),
     cfg.IntOpt('request_timeout', default=3000,
                help=_("The number of milliseconds the agent will wait for "
                       "response on request to daemon.")),
+    cfg.IntOpt('retry', default=3,
+               help=_("The number of retries the agent will send request "
+                      "to daemon before gives up"))
 ]
 
 agent_opts = [
