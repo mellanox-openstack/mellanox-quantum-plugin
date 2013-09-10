@@ -56,7 +56,7 @@ class EswitchManager(object):
         err_msg = _("Agent cache inconsistency - port id "
                     "is not stored for %s"), port_mac
         LOG.error(err_msg)
-        raise exceptions.MlnxException(err_msg=err_msg)
+        raise exceptions.MlnxException(err_msg)
 
     def get_vnics_mac(self):
         return set(self.utils.get_attached_vnics().keys())
@@ -394,7 +394,8 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
 
 
 def main():
-    eventlet.monkey_patch()
+    eventlet.monkey_patch(os=False, thread=False)
+    #eventlet.monkey_patch()
     cfg.CONF(project='quantum')
     logging_config.setup_logging(cfg.CONF)
 

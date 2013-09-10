@@ -18,30 +18,42 @@
 import zmq
 import time
 
+from oslo.config import cfg
+
 from quantum.openstack.common import jsonutils
 from quantum.openstack.common import log as logging
+from quantum.plugins.mlnx.common import config  # noqa
 from quantum.plugins.mlnx.common import exceptions
 
 LOG = logging.getLogger(__name__)
 
-def timeout_decorator(func):
-    interval = 3
-    num_of_retries = 3
-    LOG.debug(_("Timeout decorating %s"),func)
-    def decorated(*args, **kwargs):
-        exc = None
-        for i in range(num_of_retries):
-            try:
-                #print("Now calling %s with %s,%s" % (func.__name__, args, kwargs))
-                return func(*args, **kwargs)
-            except Exception,e:
-                LOG.debug(_("Got request timeout - going to call again after "
-                            "sleeping %s"),(interval*(i+1)))
-                time.sleep(interval*(i+1))
-                exc = e
-        LOG.debug(_("Raising exception"))
-        raise exc
-    return decorated
+
+class RetryDec(object):
+    """Retry decorator reruns a method 'retry' times if an exception occurs.
+    
+    Decorator for retrying a method  if RequestTimeout exception occurs
+    If method raises exception, retries 'retry' times with increasing
+    waiting period between calls with 'interval' multiplier.     
+    """
+    def __init__(self, interval, retry):
+        self.interval = interval
+        self.retry = retry
+    def __call__(self, original_func):
+        dec_self = self
+        def decorated(*args, **kwargs):
+            exc = None
+            for i in range(dec_self.retry):
+                try:
+                    return original_func(*args, **kwargs)
+                except exceptions.RequestTimeout,e:
+                    LOG.debug(_("Request timeout - call again after "
+                            "%s seconds"),(dec_self.interval*(i+1)))
+                    time.sleep(dec_self.interval*(i+1))
+                    exc = e
+            LOG.debug(_("Raising exception"))
+            raise exc
+        return decorated
+       
     
 class EswitchUtils(object):
     def __init__(self, daemon_endpoint, timeout):
@@ -61,7 +73,7 @@ class EswitchUtils(object):
             self.poller.register(self._conn, zmq.POLLIN)
         return self.__conn
 
-    @timeout_decorator
+    @RetryDec(cfg.CONF.ESWITCH.request_timeout/1000,cfg.CONF.ESWITCH.retry)
     def send_msg(self, msg):
         self._conn.send(msg)
 
