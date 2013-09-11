@@ -20,3 +20,6 @@ from quantum.common import exceptions as qexc
 
 class MlnxException(qexc.QuantumException):
     message = _("Mlnx Exception: %(err_msg)s")
+    
+class RequestTimeout(qexc.QuantumException):
+    message = _('Request Timeout')
