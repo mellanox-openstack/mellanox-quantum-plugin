@@ -86,7 +86,7 @@ class MlxEthVIFDriver(vif.LibvirtBaseVIFDriver):
             elif vif_type == VIF_TYPE_DIRECT:
                 dev = mapping['vif_devname'].replace('tap','eth')
             else:
-                conf = self.libvirt_gen_drv.get_config(instance, network, mapping, image_meta)
+                conf = self.libvirt_gen_drv.get_config(instance, network, mapping, image_meta, inst_type)
                 return conf
         except Exception as e:
             LOG.debug("Error in get_config: %s", e) 
