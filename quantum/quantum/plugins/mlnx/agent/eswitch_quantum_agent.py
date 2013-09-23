@@ -394,8 +394,8 @@ class MlnxEswitchQuantumAgent(sg_rpc.SecurityGroupAgentRpcMixin):
 
 
 def main():
-    eventlet.monkey_patch(os=False, thread=False)
-    #eventlet.monkey_patch()
+    #eventlet.monkey_patch(os=False, thread=False)
+    eventlet.monkey_patch()
     cfg.CONF(project='quantum')
     logging_config.setup_logging(cfg.CONF)
 
