@@ -173,9 +173,6 @@ class MlnxEswitchRpcCallbacks(sg_rpc.SecurityGroupAgentRpcCallbackMixin):
         port = kwargs.get('port')
         net_type = kwargs.get('network_type')
         segmentation_id = kwargs.get('segmentation_id')
-        if not segmentation_id:
-            # compatibility with pre-Havana RPC vlan_id encoding
-            segmentation_id = kwargs.get('vlan_id')
         physical_network = kwargs.get('physical_network')
         net_id = port['network_id']
         if self.eswitch.vnic_port_exists(port['mac_address']):
@@ -341,8 +338,12 @@ class MlnxEswitchNeutronAgent(sg_rpc.SecurityGroupAgentRpcMixin):
                                     dev_details['network_id'],
                                     dev_details['network_type'],
                                     dev_details['physical_network'],
-                                    dev_details['vlan_id'],
+                                    dev_details['segmentation_id'],
                                     dev_details['admin_state_up'])
+                if dev_details['admin_state_up']:
+                    self.plugin_rpc.update_device_up(self.context,
+                                                     device,
+                                                     self.agent_id)
             else:
                 LOG.debug(_("Device with mac_address %s not defined "
                           "on Neutron Plugin"), device)
