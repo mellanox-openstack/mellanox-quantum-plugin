@@ -1,0 +1,11 @@
+--- a/linuxbridge_neutron_agent.py	2013-10-18 16:11:49.000000000 +0200
++++ b/linuxbridge_neutron_agent.py	2013-11-26 10:22:35.000000000 +0200
+@@ -356,7 +356,7 @@
+             return
+         if network_type == lconst.TYPE_FLAT:
+             return self.ensure_flat_bridge(network_id, physical_interface)
+-        elif network_type == lconst.TYPE_VLAN:
++        elif network_type in (lconst.TYPE_VLAN, 'ib'):
+             return self.ensure_vlan_bridge(network_id, physical_interface,
+                                            segmentation_id)
+         else:
